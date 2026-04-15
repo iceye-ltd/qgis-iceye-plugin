@@ -1,0 +1,62 @@
+[project]
+name = "iceye-qgis-plugins"
+version = "1.0.0"
+description = "ICEYE QGIS plugin for SAR Single Look Complex data explotation."
+readme = "README.md"
+requires-python = ">=3.11"
+
+[project.optional-dependencies]
+dev = [
+    "pre-commit>=4.4.0",
+    "pyqt5>=5.15.11",
+    "ruff>=0.14.4",
+]
+test = [
+    "pytest>=9.0.2",
+    "pytest-qgis>=2.1.0",
+]
+
+[tool.ruff]
+line-length = 88
+target-version = "py311"
+exclude = [
+    "test/test_init.py",  # Ignore test_init.py for now
+    "test/geometry_data_generator.py",  # ignore since its only run if needed
+    "plugin_upload.py",
+    "legacy",
+    ".git",
+    "resources/resources.py",  # Generated file
+]
+
+[tool.ruff.lint]
+select = [
+    "E",  # Errors
+    "F",  # pyflakes
+    "W",  # pycodestyle warnings
+    "I",  # isort
+    "N",  # pep8-naming
+    "PTH",  # Use pathlib
+    "D",  # pydocstyle
+]
+ignore = [
+    "D100",  # Missing docstring in public module
+    "D104",  # Missing docstring in public package
+    "E501",  # Line too long (formatter handles this)
+    "N802",  # Function name should be lowercase (Qt uses camelCase)
+    "N803",  # Allow using camelcase variables
+    "N806",  # Variable should be lowercase (Qt uses camelCase)
+    "N999",  # Module naming follows QGIS conventions, not PEP 8
+    "F403",  # Allow wildcard importing resources
+    "F401",
+]
+
+[tool.ruff.lint.pydocstyle]
+convention = "numpy"
+
+# Enable import sorting
+[tool.ruff.lint.isort]
+known-first-party = ["ICEYE_toolbox"]
+
+[tool.ruff.format]
+quote-style = "double"
+

@@ -1,0 +1,64 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<ui version="4.0">
+ <class>StacCatalogWidget</class>
+ <widget class="QDockWidget" name="StacCatalogWidget">
+  <property name="windowTitle">
+   <string>STAC Catalog</string>
+  </property>
+  <widget class="QWidget" name="dockWidgetContents">
+   <layout class="QVBoxLayout" name="verticalLayout">
+    <item>
+     <layout class="QHBoxLayout" name="toolbarLayout">
+      <item>
+       <widget class="QLineEdit" name="filterLineEdit">
+        <property name="placeholderText">
+         <string>Filter collections/items</string>
+        </property>
+       </widget>
+      </item>
+      <item>
+       <widget class="QPushButton" name="refreshButton">
+        <property name="text">
+         <string>Refresh</string>
+        </property>
+       </widget>
+      </item>
+      <item>
+       <widget class="QPushButton" name="loadGeojsonButton">
+        <property name="text">
+         <string>Load Preview</string>
+        </property>
+       </widget>
+      </item>
+     <item>
+      <widget class="QPushButton" name="loadSlcButton">
+       <property name="text">
+        <string>Load SLC</string>
+       </property>
+      </widget>
+     </item>
+     </layout>
+    </item>
+    <item>
+     <widget class="QTreeWidget" name="catalogTree">
+      <property name="headerHidden">
+       <bool>true</bool>
+      </property>
+     </widget>
+    </item>
+    <item>
+     <widget class="QLabel" name="statusLabel">
+      <property name="text">
+       <string>Ready</string>
+      </property>
+      <property name="wordWrap">
+       <bool>true</bool>
+      </property>
+     </widget>
+    </item>
+   </layout>
+  </widget>
+ </widget>
+ <resources/>
+ <connections/>
+</ui>

@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="utf-8" ?>
+<kml xmlns="http://www.opengis.net/kml/2.2">
+<Document id="mask">
+<Folder><name>ICEYE_WWGTZ2_20251109T141525Z_6987409_X44_SLED_ROI</name>
+  <Placemark>
+	<Style><LineStyle><color>ff0000ff</color></LineStyle><PolyStyle><fill>0</fill></PolyStyle></Style>
+      <Polygon><outerBoundaryIs><LinearRing><coordinates>117.745038955979,38.9794550192299 117.748530656705,38.9794550192299 117.748530656705,38.9821803700199 117.745038955979,38.9821803700199 117.745038955979,38.9794550192299</coordinates></LinearRing></outerBoundaryIs></Polygon>
+  </Placemark>
+</Folder>
+</Document></kml>

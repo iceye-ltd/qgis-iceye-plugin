@@ -1,0 +1,47 @@
+# Python cache files
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+
+# Testing
+.pytest_cache/
+test-results/
+.coverage
+htmlcov/
+.tox/
+*.cover
+
+# Linting
+.ruff_cache/
+
+# IDEs
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# Git
+.git/
+.gitignore
+
+# Build artifacts
+build/
+dist/
+*.egg-info/
+
+# Documentation
+*.md
+README.txt
+
+# Scripts not needed in container
+run_tests.sh
+run_tests_interactive.sh
+plugin_upload.py
+Makefile
+pb_tool.cfg
+
+# Test files (since tests are run by mounting the volume)
+test/

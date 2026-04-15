@@ -1,0 +1,5 @@
+test/fixtures/ICEYE_WWGTZ2_20251109T141525Z_6987409_X44_SLED_COLOR_37a3f6c7.tif filter=lfs diff=lfs merge=lfs -text
+test/fixtures/ICEYE_WWGTZ2_20251109T141525Z_6987409_X44_SLED_CROP_37a3f6c7.tif filter=lfs diff=lfs merge=lfs -text
+test/fixtures/ICEYE_WWGTZ2_20251109T141525Z_6987409_X44_SLED_FOCUS_37a3f6c7.tif filter=lfs diff=lfs merge=lfs -text
+test/fixtures/ICEYE_WWGTZ2_20251109T141525Z_6987409_X44_SLED_SHORT_37a3f6c7.tif filter=lfs diff=lfs merge=lfs -text
+test/fixtures/ICEYE_WWGTZ2_20251109T141525Z_6987409_X44_SLED_COLOR_FAST_37a3f6c7.tif filter=lfs diff=lfs merge=lfs -text

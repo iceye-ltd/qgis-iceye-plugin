@@ -1,0 +1,27 @@
+<RCC>
+    <qresource prefix="/plugins/ICEYEToolbox" >
+        <file>icon.png</file>
+        <file>sar_angles.png</file>
+        <file>shadows_down_label.svg</file>
+        <file>north_up_label.svg</file>
+        <file>layover_up_label.svg</file>
+        <file>export-svgrepo-com.svg</file>
+        <file>screenshot-svgrepo-com.svg</file>
+        <file>crop-simple-svgrepo-com.svg</file>
+        <file>focus-horizontal-round-round-840-svgrepo-com.svg</file>
+        <file>video-1-svgrepo-com.svg</file>
+        <file>lens-svgrepo-com.svg</file>
+        <file>grayscale-svgrepo-com.svg</file>
+        <file>rgb-svgrepo-com.svg</file>
+        <file>spectrum-svgrepo-com.svg</file>
+        <file>catalog-svgrepo-com.svg</file>
+        <file>subaperture-viewer.svg</file>
+        <file>ruler.svg</file>
+        <file>irf.svg</file>
+        <file>batch_masks.svg</file>
+        <file>batch_process.svg</file>
+    </qresource>
+    <qresource prefix="/plugins/ICEYEToolbox/styles">
+        <file>iceye_default.qml</file>
+    </qresource>
+</RCC>
