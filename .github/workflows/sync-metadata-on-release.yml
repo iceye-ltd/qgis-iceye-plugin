@@ -1,0 +1,40 @@
+# Sync QGIS plugin metadata.txt with the release version when a GitHub release is published.
+# Release Please updates pyproject.toml and CHANGELOG; this keeps metadata.txt in sync.
+name: Sync metadata on release
+
+on:
+  release:
+    types: [published]
+
+permissions:
+  contents: write
+
+jobs:
+  sync-metadata:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Extract version from tag
+        id: version
+        run: |
+          VERSION="${GITHUB_REF_NAME#v}"
+          echo "version=$VERSION" >> $GITHUB_OUTPUT
+
+      - name: Update metadata.txt
+        run: |
+          sed -i "s/^version=.*/version=${{ steps.version.outputs.version }}/" metadata.txt
+
+      - name: Commit and push
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add metadata.txt
+          if git diff --staged --quiet; then
+            echo "No changes to metadata.txt"
+          else
+            git commit -m "chore: sync metadata.txt to ${{ steps.version.outputs.version }}"
+            git push
+          fi

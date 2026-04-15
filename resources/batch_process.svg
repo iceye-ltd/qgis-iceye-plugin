@@ -1,0 +1,57 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+  <!-- Background: stacked green mask layers -->
+  <rect
+    x="0.5"
+    y="11"
+    width="14"
+    height="10"
+    rx="1.5"
+    fill="#1a7a3e"
+    stroke="#0f5228"
+    stroke-width="0.75"
+  />
+  <rect
+    x="3"
+    y="5"
+    width="14"
+    height="10"
+    rx="1.5"
+    fill="#259652"
+    stroke="#146632"
+    stroke-width="0.75"
+  />
+  <rect
+    x="5.5"
+    y="0"
+    width="14"
+    height="10"
+    rx="1.5"
+    fill="#34b86a"
+    stroke="#1a7a45"
+    stroke-width="0.75"
+  />
+  <rect
+    x="8.5"
+    y="3"
+    width="8"
+    height="4"
+    rx="0.5"
+    fill="none"
+    stroke="#e8fff0"
+    stroke-width="0.75"
+    opacity="0.85"
+  />
+  <!-- Foreground: cog -->
+  <g transform="translate(14.75, 14.25)">
+    <circle
+      r="5.1"
+      fill="none"
+      stroke="#1e293b"
+      stroke-width="1.75"
+      stroke-dasharray="2.1 1.25"
+      stroke-linecap="round"
+    />
+    <circle r="2.35" fill="#f8fafc" stroke="#1e293b" stroke-width="1.25"/>
+  </g>
+</svg>

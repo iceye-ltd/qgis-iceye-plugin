@@ -1,0 +1,5 @@
+blank_issues_enabled: true
+contact_links:
+  - name: Contributing guidelines
+    url: https://github.com/iceye-ltd/iceye-qgis-plugins/blob/main/CONTRIBUTING.md
+    about: How to set up a dev environment, run tests, and open pull requests

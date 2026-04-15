@@ -1,0 +1,5 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="48" height="48" viewBox="0 0 48 48">
+  <title>Layover Arrow</title>
+  <polygon points="0,48 48,48 24,0" fill="plum" />
+  <text x="24" y="38" font-family="Arial" font-size="18" font-weight="bold" fill="white" text-anchor="middle">L</text>
+</svg>
