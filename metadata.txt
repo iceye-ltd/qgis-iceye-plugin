@@ -1,33 +1,58 @@
 # This file contains metadata for your plugin.
 
-# This file should be included when you package your plugin.# Mandatory items:
+# This file should be included when you package your plugin.
+
+# Mandatory items:
 
 [general]
 name=ICEYEToolbox
 qgisMinimumVersion=3.0
-description=ICEYEToolbox of ICEYE Plugins
-version=1.0.0
+description=Collection of ICEYE SAR tools for STAC browsing, SLC analysis, focusing, export, and visualization in QGIS
+version=0.1.0
 author=Santeri Kuronen
 email=santeri.kuronen@iceye.com
 
-about=ICEYEToolbox where all ICEYE plugins are
+about=The ICEYE Toolbox regroups a collection of tools for exploitation of ICEYE SAR imagery products (SLC, GRD, QLK, CSI, VID) within QGIS.
 
-tracker=http://bugs
-repository=http://repo
+    Features: STAC Browser (browse and load the ICEYE AWS Open Dataset), Canvas Screenshot, Layer Export (TIFF/PNG/GIF/MP4), Lens Tool (Normal/Focus/Spectrum/Color/Sub-aperture modes), Crop Tool, Canvas Rotation and SAR Mandala, Height Ruler, IRF Analysis, Batch Processing, Temporal Properties, and Auto Style with SAR-optimised colormaps.
+
+    External dependencies:
+    - ffmpeg: required for MP4 video export (Layer Export and Crop Tool video mode)
+    - ImageMagick: required for animated GIF export
+    - Pillow (Python): optional, used for image processing
+
+    SLC-specific tools (Focus, Spectrum, Color, Sub-aperture, IRF, Canvas Rotation, SAR Mandala, Height Ruler) require ICEYE SLC data with embedded metadata.
+
+    For help installing Python packages in QGIS on Windows, see: https://landscapearchaeology.org/2018/installing-python-packages-in-qgis-3-for-windows/
+
+tracker=https://github.com/iceye-ltd/qgis-iceye-plugin/issues
+repository=https://github.com/iceye-ltd/qgis-iceye-plugin
 # End of mandatory metadata
 
 # Recommended items:
 
+license=GPL-2.0-or-later
+
 hasProcessingProvider=no
-# Uncomment the following line and add your changelog:
-# changelog=
+
+changelog=Version 0.1.0 (2025-02-25):
+    - STAC Browser: browse ICEYE STAC catalog on AWS Open Data and load items as raster layers
+    - Canvas Screenshot: export the current map canvas view as PNG or JPEG
+    - Layer Export: export raster layers to TIFF, PNG, GIF (ImageMagick), and MP4 (ffmpeg)
+    - Lens Tool: interactive magnifying lens with Normal, Focus (1D PGA), 2D Spectrum, Range Power Spectrum, Color, and Sub-aperture modes
+    - Crop Tool: draw extent to crop, focus (PGA), create video, or generate RGB spectrum visualisation
+    - Canvas Rotation and SAR Mandala: rotate shadows down/layover up/reset north; place and drag georeferenced mandalas
+    - Measuring Tools: Height Ruler (SAR-geometry-aware) and IRF Analysis (HPBW, PSLR, ISLR)
+    - Batch Processing: collect areas on the map and run Crop, Color, Focus, or Video on each sequentially
+    - Temporal Properties: auto-configure temporal ranges for standard and multi-frame ICEYE layers
+    - Auto Style and Colormaps: default grayscale styling for SLC layers; Grey Log, Square-Root, Asinh, LogLog, and RGB Teal colormaps
 
 # Tags are comma separated with spaces allowed
-tags=python
+tags=SAR, radar, ICEYE, remote sensing, SLC, raster, STAC
 
-homepage=http://homepage
-category=Plugins
-icon=icon.png
+homepage=https://github.com/iceye-ltd/qgis-iceye-plugin
+category=Raster
+icon=resources/icon.png
 # experimental flag
 experimental=True
 
@@ -39,9 +64,5 @@ deprecated=False
 # Check the documentation for more information.
 # plugin_dependencies=
 
-# Category of the plugin: Raster, Vector, Database or Web
-# category=
-
 # If the plugin can run on QGIS Server.
 server=False
-

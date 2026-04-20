@@ -1,6 +1,6 @@
 [project]
 name = "iceye-qgis-plugins"
-version = "1.0.0"
+version = "0.1.0"
 description = "ICEYE QGIS plugin for SAR Single Look Complex data explotation."
 readme = "README.md"
 requires-python = ">=3.11"
