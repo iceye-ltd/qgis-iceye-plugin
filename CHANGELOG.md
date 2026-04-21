@@ -7,7 +7,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-## [1.0.0] - 2025-02-25
+## [0.1.0] - 2025-02-25
 
 ### Added
 
@@ -20,4 +20,4 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Temporal Properties** — Auto-configure temporal ranges for ICEYE layers; multi-frame support for QGIS Temporal Controller
 - **Auto Style & Colormaps** — Default grayscale styling for SLC layers; Grey Log, Square-Root, Asinh, and LogLog colormaps for SAR
 
-[1.0.0]: https://github.com/iceye-ltd/iceye-qgis-plugins/releases/tag/v1.0.0
+[0.1.0]: https://github.com/iceye-ltd/qgis-iceye-plugin/releases/tag/v0.1.0
