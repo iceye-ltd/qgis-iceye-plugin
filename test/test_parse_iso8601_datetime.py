@@ -5,7 +5,7 @@ from datetime import datetime, timezone
 
 import pytest
 
-from ICEYE_toolbox.core.metadata import parse_iso8601_datetime
+from iceye_toolbox.core.metadata import parse_iso8601_datetime
 
 
 @pytest.mark.parametrize(

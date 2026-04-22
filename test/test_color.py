@@ -8,15 +8,15 @@ import pytest
 from osgeo import gdal
 from qgis.core import QgsRasterLayer, QgsRectangle
 
-from ICEYE_toolbox.core.color import (
+from iceye_toolbox.core.color import (
     ColorTask,
     color_image,
     color_image_slow_time,
     create_color_raster_layer,
 )
-from ICEYE_toolbox.core.cropper import CropLayerTask
-from ICEYE_toolbox.core.metadata import MetadataProvider
-from ICEYE_toolbox.core.raster import read_slc_layer
+from iceye_toolbox.core.cropper import CropLayerTask
+from iceye_toolbox.core.metadata import MetadataProvider
+from iceye_toolbox.core.raster import read_slc_layer
 
 # Fixtures
 

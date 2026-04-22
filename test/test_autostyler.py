@@ -8,10 +8,10 @@ import pytest
 from osgeo import gdal
 from qgis.core import QgsProject, QgsRasterLayer
 
-from ICEYE_toolbox.core.auto_styler import AutoStyler, _find_alpha_band
+from iceye_toolbox.core.auto_styler import AutoStyler, _find_alpha_band
 
 # Import resources so Qt resource paths work in tests
-from ICEYE_toolbox.resources import resources
+from iceye_toolbox.resources import resources
 
 # QGIS enum values for minMaxOrigin
 # CumulativeCut=3; extent: UpdatedCanvas=1, CurrentCanvas=2 (both are dynamic)

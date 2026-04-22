@@ -29,6 +29,6 @@ if [ ! -d "$dst" ]; then
     mkdir -p "$dst"
 fi
 
-ln -sfn "${PWD}" "${dst}/ICEYE_toolbox"
+ln -sfn "${PWD}" "${dst}/iceye_toolbox"
 
 echo "All plugins linked for '$os'."

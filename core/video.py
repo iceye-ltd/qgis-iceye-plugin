@@ -666,7 +666,7 @@ def create_multiband_raster(
 
     if output_raster is None:
         QgsMessageLog.logMessage(
-            f"Failed to create raster file: {path}", "ICEYE_toolbox", Qgis.Critical
+            f"Failed to create raster file: {path}", "iceye_toolbox", Qgis.Critical
         )
         return None
 
@@ -682,7 +682,7 @@ def create_multiband_raster(
         else:
             QgsMessageLog.logMessage(
                 f"Failed to open source path: {source_path}",
-                "ICEYE_toolbox",
+                "iceye_toolbox",
                 Qgis.Critical,
             )
             return None
@@ -708,7 +708,7 @@ def write_frame_to_band(
     except Exception as e:
         QgsMessageLog.logMessage(
             f"Failed to write frame to band {band_index}: {e!s}",
-            "ICEYE_toolbox",
+            "iceye_toolbox",
             Qgis.Critical,
         )
         return False

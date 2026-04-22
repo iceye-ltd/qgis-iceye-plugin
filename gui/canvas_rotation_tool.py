@@ -404,7 +404,7 @@ class MandalaToolbarAction(SAROverlayToolbarBase):
         self.toolbar.setObjectName("ICEYE SAR View")
 
         shadows_action = QAction(
-            QIcon(":/plugins/ICEYEToolbox/shadows_down_label.svg"),
+            QIcon(":/plugins/iceye_toolbox/shadows_down_label.svg"),
             _tr("Rotate Shadows Down"),
             self.iface.mainWindow(),
         )
@@ -413,7 +413,7 @@ class MandalaToolbarAction(SAROverlayToolbarBase):
         self.toolbar.addAction(shadows_action)
 
         north_action = QAction(
-            QIcon(":/plugins/ICEYEToolbox/north_up_label.svg"),
+            QIcon(":/plugins/iceye_toolbox/north_up_label.svg"),
             _tr("Reset to North"),
             self.iface.mainWindow(),
         )
@@ -422,7 +422,7 @@ class MandalaToolbarAction(SAROverlayToolbarBase):
         self.toolbar.addAction(north_action)
 
         layover_action = QAction(
-            QIcon(":/plugins/ICEYEToolbox/layover_up_label.svg"),
+            QIcon(":/plugins/iceye_toolbox/layover_up_label.svg"),
             _tr("Rotate Layover Up"),
             self.iface.mainWindow(),
         )
@@ -431,7 +431,7 @@ class MandalaToolbarAction(SAROverlayToolbarBase):
         self.toolbar.addAction(layover_action)
 
         mandala_action = QAction(
-            QIcon(":/plugins/ICEYEToolbox/sar_angles.png"),
+            QIcon(":/plugins/iceye_toolbox/sar_angles.png"),
             _tr("Toggle SAR Mandala"),
             self.iface.mainWindow(),
         )
@@ -447,7 +447,7 @@ class MandalaToolbarAction(SAROverlayToolbarBase):
         )
 
         self._place_btn = QToolButton(self.toolbar)
-        self._place_btn.setIcon(QIcon(":/plugins/ICEYEToolbox/sar_angles.png"))
+        self._place_btn.setIcon(QIcon(":/plugins/iceye_toolbox/sar_angles.png"))
         self._place_btn.setToolTip(_tr("Place / Move SAR Mandala"))
         self._place_btn.setCheckable(True)
         self._place_btn.setMenu(place_menu)

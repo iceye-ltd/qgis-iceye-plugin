@@ -9,8 +9,8 @@ from numpy.typing import NDArray
 from osgeo import gdal
 from qgis.core import Qgis, QgsMessageLog, QgsRasterLayer, QgsRectangle
 
-from ICEYE_toolbox.core.cropper import get_extend_image_coords
-from ICEYE_toolbox.core.metadata import IceyeMetadata
+from iceye_toolbox.core.cropper import get_extend_image_coords
+from iceye_toolbox.core.metadata import IceyeMetadata
 
 
 def read_slc_layer(

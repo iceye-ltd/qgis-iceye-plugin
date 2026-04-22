@@ -8,7 +8,7 @@ import pytest
 from qgis.PyQt.QtCore import Qt
 from qgis.PyQt.QtWidgets import QTreeWidgetItem
 
-from ICEYE_toolbox.gui.stac_catalog_widget import (
+from iceye_toolbox.gui.stac_catalog_widget import (
     StacCatalogWidget,
     StacItemsQlkTask,
     StacSlcBatchTask,
@@ -125,7 +125,7 @@ class TestOnItemsLoadedQlkBranching:
         def capture_add_task(task):
             add_task_calls.append(task)
 
-        with patch("ICEYE_toolbox.gui.stac_catalog_widget.QgsApplication") as mock_qgs:
+        with patch("iceye_toolbox.gui.stac_catalog_widget.QgsApplication") as mock_qgs:
             mock_qgs.taskManager.return_value.addTask.side_effect = capture_add_task
             stac_widget.on_items_loaded(True, items, None)
 
@@ -192,7 +192,7 @@ class TestOnItemsLoadedQlkBranching:
             add_task_calls.append(task)
 
         with (
-            patch("ICEYE_toolbox.gui.stac_catalog_widget.QgsApplication") as mock_qgs,
+            patch("iceye_toolbox.gui.stac_catalog_widget.QgsApplication") as mock_qgs,
             patch.object(stac_widget, "_add_item_layer", return_value=True) as mock_add,
         ):
             mock_qgs.taskManager.return_value.addTask.side_effect = capture_add_task
@@ -208,9 +208,9 @@ class TestQlkCacheDir:
     """Tests for _qlk_cache_dir helper."""
 
     def test_returns_path_under_iceye_toolbox(self, stac_widget):
-        """Should return path ending with ICEYE_toolbox/qlk_cache."""
+        """Should return path ending with iceye_toolbox/qlk_cache."""
         path = stac_widget._qlk_cache_dir()
-        assert "ICEYE_toolbox" in str(path)
+        assert "iceye_toolbox" in str(path)
         assert path.name == "qlk_cache"
 
 
@@ -308,7 +308,7 @@ class TestStacSlcSingleDownloadTask:
         )
 
         with patch(
-            "ICEYE_toolbox.gui.stac_catalog_widget.urlopen",
+            "iceye_toolbox.gui.stac_catalog_widget.urlopen",
             return_value=mock_response,
         ):
             result = task.run()
@@ -413,9 +413,9 @@ class TestLoadSelectedSlc:
             add_task_calls.append(task)
 
         with (
-            patch("ICEYE_toolbox.gui.stac_catalog_widget.QgsApplication") as mock_qgs,
+            patch("iceye_toolbox.gui.stac_catalog_widget.QgsApplication") as mock_qgs,
             patch(
-                "ICEYE_toolbox.gui.stac_catalog_widget.stac_client.fetch_item",
+                "iceye_toolbox.gui.stac_catalog_widget.stac_client.fetch_item",
                 side_effect=[stac_item_1, stac_item_2],
             ),
             patch.object(stac_widget, "_slc_cache_dir", return_value=tmp_path),
@@ -450,9 +450,9 @@ class TestLoadSelectedSlc:
             add_task_calls.append(task)
 
         with (
-            patch("ICEYE_toolbox.gui.stac_catalog_widget.QgsApplication") as mock_qgs,
+            patch("iceye_toolbox.gui.stac_catalog_widget.QgsApplication") as mock_qgs,
             patch(
-                "ICEYE_toolbox.gui.stac_catalog_widget.stac_client.fetch_item",
+                "iceye_toolbox.gui.stac_catalog_widget.stac_client.fetch_item",
                 return_value=stac_item_no_slc,
             ),
             patch.object(stac_widget, "_slc_cache_dir", return_value=tmp_path),
@@ -473,7 +473,7 @@ class TestLoadSelectedSlc:
         def capture_add_task(task):
             add_task_calls.append(task)
 
-        with patch("ICEYE_toolbox.gui.stac_catalog_widget.QgsApplication") as mock_qgs:
+        with patch("iceye_toolbox.gui.stac_catalog_widget.QgsApplication") as mock_qgs:
             mock_qgs.taskManager.return_value.addTask.side_effect = capture_add_task
             stac_widget.load_selected_slc()
 

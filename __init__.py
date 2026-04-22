@@ -36,10 +36,10 @@ def classFactory(iface):  # pylint: disable=invalid-name
 
     Returns
     -------
-    ICEYEToolbox
+    IceyeToolbox
         Plugin instance.
     """
     #
-    from .ICEYEToolbox import ICEYEToolbox
+    from .iceye_toolbox import IceyeToolbox
 
-    return ICEYEToolbox(iface)
+    return IceyeToolbox(iface)
