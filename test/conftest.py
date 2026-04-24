@@ -8,8 +8,8 @@ import pytest
 from qgis.core import QgsCoordinateReferenceSystem, QgsRasterLayer, QgsRectangle
 from qgis.gui import QgsMapCanvas
 
-from ICEYE_toolbox.core.metadata import IceyeMetadata, MetadataProvider
-from ICEYE_toolbox.core.raster import read_slc_layer
+from iceye_toolbox.core.metadata import IceyeMetadata, MetadataProvider
+from iceye_toolbox.core.raster import read_slc_layer
 
 # Bundled regression rasters (see test/fixtures/).
 _FIXTURES_DIR = Path(__file__).resolve().parent / "fixtures"

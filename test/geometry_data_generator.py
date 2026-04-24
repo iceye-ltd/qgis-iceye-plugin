@@ -4,7 +4,7 @@ from pathlib import Path
 import numpy as np
 import pytest
 
-from ICEYE_toolbox.core.geometry import (
+from iceye_toolbox.core.geometry import (
     WGS84Norm,
     ecef_to_geodetic,
     geodetic_to_ecef,

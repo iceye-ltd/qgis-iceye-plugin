@@ -8,13 +8,13 @@ import pytest
 from osgeo import gdal
 from qgis.core import QgsRasterLayer, QgsRectangle
 
-from ICEYE_toolbox.core.autofocus import (
+from iceye_toolbox.core.autofocus import (
     AutofocusTask,
     entropy,
     focus_with_centered_looks_pga,
 )
-from ICEYE_toolbox.core.cropper import CropLayerTask
-from ICEYE_toolbox.core.metadata import MetadataProvider
+from iceye_toolbox.core.cropper import CropLayerTask
+from iceye_toolbox.core.metadata import MetadataProvider
 
 # Fixtures
 

@@ -28,7 +28,7 @@ from qgis.core import (
 )
 from qgis.gui import QgsMapCanvas
 
-from ICEYE_toolbox.core.raster import read_all_band_from_layer
+from iceye_toolbox.core.raster import read_all_band_from_layer
 
 from ..gui.export_dialog import ExportDialog
 

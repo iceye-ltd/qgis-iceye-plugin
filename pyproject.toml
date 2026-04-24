@@ -55,7 +55,7 @@ convention = "numpy"
 
 # Enable import sorting
 [tool.ruff.lint.isort]
-known-first-party = ["ICEYE_toolbox"]
+known-first-party = ["iceye_toolbox"]
 
 [tool.ruff.format]
 quote-style = "double"

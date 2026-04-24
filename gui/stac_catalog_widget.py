@@ -744,13 +744,13 @@ class StacCatalogWidget(BASE, WIDGET):
         base = QStandardPaths.writableLocation(QStandardPaths.AppLocalDataLocation)
         if not base:
             base = Path("~/.local/share/QGIS").expanduser()
-        return Path(base) / "ICEYE_toolbox" / "slc_cache"
+        return Path(base) / "iceye_toolbox" / "slc_cache"
 
     def _qlk_cache_dir(self) -> Path:
         base = QStandardPaths.writableLocation(QStandardPaths.AppLocalDataLocation)
         if not base:
             base = Path("~/.local/share/QGIS").expanduser()
-        return Path(base) / "ICEYE_toolbox" / "qlk_cache"
+        return Path(base) / "iceye_toolbox" / "qlk_cache"
 
     def _slc_asset_from_item(self, item: dict) -> dict | None:
         assets = item.get("assets") or {}

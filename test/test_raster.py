@@ -2,7 +2,7 @@
 
 import numpy as np
 
-from ICEYE_toolbox.core.raster import toggle_shadows_down
+from iceye_toolbox.core.raster import toggle_shadows_down
 
 
 class TestToggleShadowsDown:
