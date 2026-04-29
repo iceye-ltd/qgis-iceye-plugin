@@ -1193,7 +1193,7 @@ class LensToolbarAction:
         self.lens_toolbar.setObjectName("ICEYE Lens")
 
         self.lens_action = QAction(
-            QIcon(":/plugins/ICEYEToolbox/lens-svgrepo-com.svg"),
+            QIcon(":/plugins/iceye_toolbox/lens-svgrepo-com.svg"),
             _tr("Lens"),
             self.iface.mainWindow(),
         )
@@ -1204,7 +1204,7 @@ class LensToolbarAction:
         self.lens_tool.deactivated.connect(self._on_lens_tool_deactivated)
 
         normal_action = QAction(
-            QIcon(":/plugins/ICEYEToolbox/grayscale-svgrepo-com.svg"),
+            QIcon(":/plugins/iceye_toolbox/grayscale-svgrepo-com.svg"),
             _tr("Lens Render: Normal"),
             self.iface.mainWindow(),
         )
@@ -1215,7 +1215,7 @@ class LensToolbarAction:
 
         spectrum_action = QAction(
             QIcon(
-                ":/plugins/ICEYEToolbox/focus-horizontal-round-round-840-svgrepo-com.svg"
+                ":/plugins/iceye_toolbox/focus-horizontal-round-round-840-svgrepo-com.svg"
             ),
             _tr("Lens Render: Focus"),
             self.iface.mainWindow(),
@@ -1228,7 +1228,7 @@ class LensToolbarAction:
         self.lens_render_actions["spectrum"] = spectrum_action
 
         spectrum_2d_action = QAction(
-            QIcon(":/plugins/ICEYEToolbox/spectrum-svgrepo-com.svg"),
+            QIcon(":/plugins/iceye_toolbox/spectrum-svgrepo-com.svg"),
             _tr("2D Spectrum"),
             self.iface.mainWindow(),
         )
@@ -1238,7 +1238,7 @@ class LensToolbarAction:
         )
 
         range_spectrum_action = QAction(
-            QIcon(":/plugins/ICEYEToolbox/spectrum-svgrepo-com.svg"),
+            QIcon(":/plugins/iceye_toolbox/spectrum-svgrepo-com.svg"),
             _tr("Range Power Spectrum"),
             self.iface.mainWindow(),
         )
@@ -1253,7 +1253,7 @@ class LensToolbarAction:
 
         self._spectrum_dropdown_btn = QToolButton()
         self._spectrum_dropdown_btn.setIcon(
-            QIcon(":/plugins/ICEYEToolbox/spectrum-svgrepo-com.svg")
+            QIcon(":/plugins/iceye_toolbox/spectrum-svgrepo-com.svg")
         )
         self._spectrum_dropdown_btn.setText(_tr("Lens Render: 2D Spectrum"))
         self._spectrum_dropdown_btn.setToolTip(_tr("Spectrum mode"))
@@ -1270,7 +1270,7 @@ class LensToolbarAction:
         self.lens_render_actions["range_spectrum"] = range_spectrum_action
 
         color_action = QAction(
-            QIcon(":/plugins/ICEYEToolbox/rgb-svgrepo-com.svg"),
+            QIcon(":/plugins/iceye_toolbox/rgb-svgrepo-com.svg"),
             _tr("Lens Render: Color"),
             self.iface.mainWindow(),
         )
@@ -1280,7 +1280,7 @@ class LensToolbarAction:
         self.lens_render_actions["color"] = color_action
 
         azimuth_viewer_action = QAction(
-            QIcon(":/plugins/ICEYEToolbox/subaperture-viewer.svg"),
+            QIcon(":/plugins/iceye_toolbox/subaperture-viewer.svg"),
             _tr("Azimuth Sub-aperture Viewer"),
             self.iface.mainWindow(),
         )
@@ -1290,7 +1290,7 @@ class LensToolbarAction:
         )
 
         range_viewer_action = QAction(
-            QIcon(":/plugins/ICEYEToolbox/subaperture-viewer.svg"),
+            QIcon(":/plugins/iceye_toolbox/subaperture-viewer.svg"),
             _tr("Range Sub-aperture Viewer"),
             self.iface.mainWindow(),
         )
@@ -1305,7 +1305,7 @@ class LensToolbarAction:
 
         self._viewer_dropdown_btn = QToolButton()
         self._viewer_dropdown_btn.setIcon(
-            QIcon(":/plugins/ICEYEToolbox/subaperture-viewer.svg")
+            QIcon(":/plugins/iceye_toolbox/subaperture-viewer.svg")
         )
         self._viewer_dropdown_btn.setText(_tr("Lens Render: Azimuth Viewer"))
         self._viewer_dropdown_btn.setToolTip(_tr("Sub-aperture viewer mode"))

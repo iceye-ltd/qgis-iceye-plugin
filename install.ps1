@@ -6,7 +6,7 @@ param(
 
 $ErrorActionPreference = "Stop"
 
-$pluginName = "ICEYE_toolbox"
+$pluginName = "iceye_toolbox"
 $sourcePath = Join-Path $RepoRoot $pluginName
 
 if (-not (Test-Path $sourcePath)) {

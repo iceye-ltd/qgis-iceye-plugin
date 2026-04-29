@@ -14,7 +14,7 @@ These are mostly guidelines, not rules. Use your best judgment, and feel free to
 
 2. **Prerequisites**: QGIS 3.44 or later
 
-3. Install from source (development-friendly): The install scripts create a link from your local QGIS plugins directory to `ICEYE_toolbox` in this repository so you can modify the code directly.
+3. Install from source (development-friendly): The install scripts create a link from your local QGIS plugins directory to `iceye_toolbox` in this repository so you can modify the code directly.
 
    **Linux**
    ```bash
@@ -176,7 +176,7 @@ Run tests:
 # crop requires a KML (or OGR vector) ROI path as the second positional argument.
 # Data outside the repo is not visible in Docker unless you mount it, for example:
 #   ICEYE_CLI_DATA_ROOT=/path/to/folder/containing/tifs ./run_cli.sh crop --output-dir /tmp/out \
-#     /iceye_data/ICEYE_..._SLC.tif /plugins/ICEYE_toolbox/test/fixtures/minimal_roi.kml
+#     /iceye_data/ICEYE_..._SLC.tif /plugins/iceye_toolbox/test/fixtures/minimal_roi.kml
 ./run_cli.sh crop --output-dir /path/to/out /path/to/full.tif /path/to/roi.kml
 ./run_cli.sh video --frames 4 --output-dir /path/to/out test/ICEYE_*_CROP_*.tif
 ./run_cli.sh color --mode slow_time test/ICEYE_*_CROP_*.tif

@@ -5,7 +5,7 @@
 # Mandatory items:
 
 [general]
-name=ICEYEToolbox
+name=iceye_toolbox
 qgisMinimumVersion=3.0
 description=Collection of ICEYE SAR tools for STAC browsing, SLC analysis, focusing, export, and visualization in QGIS
 version=0.1.0

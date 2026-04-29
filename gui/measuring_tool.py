@@ -305,7 +305,7 @@ class MeasuringToolbarAction(SAROverlayToolbarBase):
         )
 
         self._place_btn = QToolButton(self.toolbar)
-        self._place_btn.setIcon(QIcon(":/plugins/ICEYEToolbox/ruler.svg"))
+        self._place_btn.setIcon(QIcon(":/plugins/iceye_toolbox/ruler.svg"))
         self._place_btn.setToolTip(_tr("Place Height Ruler"))
         self._place_btn.setCheckable(True)
         self._place_btn.setMenu(place_menu)
@@ -336,7 +336,7 @@ class MeasuringToolbarAction(SAROverlayToolbarBase):
         # --- IRF analysis button ---
 
         self._irf_btn = QToolButton(self.toolbar)
-        self._irf_btn.setIcon(QIcon(":/plugins/ICEYEToolbox/irf.svg"))
+        self._irf_btn.setIcon(QIcon(":/plugins/iceye_toolbox/irf.svg"))
         self._irf_btn.setToolTip(
             _tr("IRF Analysis — click a point target on an SLC layer")
         )

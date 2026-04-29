@@ -203,7 +203,7 @@ class BatchToolbarAction:
         self.toolbar.setObjectName("ICEYE Batch")
 
         self.toggle_action = QAction(
-            QIcon(":/plugins/ICEYEToolbox/batch_masks.svg"),
+            QIcon(":/plugins/iceye_toolbox/batch_masks.svg"),
             _tr("Batch masks"),
             self.iface.mainWindow(),
         )
@@ -228,13 +228,13 @@ class BatchToolbarAction:
             "Crop each selected polygon mask sequentially (ICEYE source: active base layer "
             "or exactly one base ICEYE raster in the selection)."
         )
-        icon_batch_process = QIcon(":/plugins/ICEYEToolbox/batch_process.svg")
-        icon_crop = QIcon(":/plugins/ICEYEToolbox/crop-simple-svgrepo-com.svg")
-        icon_color = QIcon(":/plugins/ICEYEToolbox/rgb-svgrepo-com.svg")
+        icon_batch_process = QIcon(":/plugins/iceye_toolbox/batch_process.svg")
+        icon_crop = QIcon(":/plugins/iceye_toolbox/crop-simple-svgrepo-com.svg")
+        icon_color = QIcon(":/plugins/iceye_toolbox/rgb-svgrepo-com.svg")
         icon_focus = QIcon(
-            ":/plugins/ICEYEToolbox/focus-horizontal-round-round-840-svgrepo-com.svg"
+            ":/plugins/iceye_toolbox/focus-horizontal-round-round-840-svgrepo-com.svg"
         )
-        icon_video = QIcon(":/plugins/ICEYEToolbox/video-1-svgrepo-com.svg")
+        icon_video = QIcon(":/plugins/iceye_toolbox/video-1-svgrepo-com.svg")
 
         action_run_batch = QAction(
             icon_batch_process, _tr("Run Batch Process"), self.iface.mainWindow()

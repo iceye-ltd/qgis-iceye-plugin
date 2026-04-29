@@ -1,7 +1,7 @@
 #/***************************************************************************
-# ICEYE_toolbox
+# iceye_toolbox
 #
-# ICEYE_toolbox of ICEYE Plugins
+# iceye_toolbox of ICEYE Plugins
 #							 -------------------
 #		begin				: 2025-10-23
 #		git sha				: $Format:%H$
@@ -13,7 +13,7 @@
 # *																		 *
 # *   This program is free software; you can redistribute it and/or modify  *
 # *   it under the terms of the GNU General Public License as published by  *
-# *   the Free Software ICEYE_toolbox; either version 2 of the License, or	 *
+# *   the Free Software Foundation; either version 2 of the License, or	 *
 # *   (at your option) any later version.								   *
 # *																		 *
 # ***************************************************************************/
@@ -38,15 +38,15 @@ LOCALES =
 # translation
 SOURCES = \
 	__init__.py \
-	ICEYE_toolbox.py ICEYE_toolbox_dockwidget.py
+	iceye_toolbox.py
 
-PLUGINNAME = ICEYE_toolbox
+PLUGINNAME = iceye_toolbox
 
 PY_FILES = \
 	__init__.py \
-	ICEYE_toolbox.py ICEYE_toolbox_dockwidget.py
+	iceye_toolbox.py
 
-UI_FILES = ICEYE_toolbox_dockwidget_base.ui
+UI_FILES =
 
 EXTRAS = metadata.txt icon.png
 
