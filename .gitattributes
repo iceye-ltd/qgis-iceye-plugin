@@ -9,10 +9,7 @@ Dockerfile export-ignore
 Makefile export-ignore
 install.sh export-ignore
 install.ps1 export-ignore
-plugin_upload.py export-ignore
-pb_tool.cfg export-ignore
 .pre-commit-config.yaml export-ignore
-pyproject.toml export-ignore
 release-please-config.json export-ignore
 .release-please-manifest.json export-ignore
 CONTRIBUTING.md export-ignore
@@ -21,3 +18,8 @@ run_tests.sh export-ignore
 run_tests_interactive.sh export-ignore
 scripts/ export-ignore
 help/ export-ignore
+README.md export-ignore
+CHANGELOG.md export-ignore
+.gitattributes export-ignore
+.gitignore export-ignore
+plugin_upload.py export-ignore
