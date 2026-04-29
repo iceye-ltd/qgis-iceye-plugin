@@ -2,15 +2,15 @@
 # Requires: git. For `package`, pass VERSION (tag or commit), e.g. make package VERSION=v1.0.0
 # Excluded paths for the zip: add `path export-ignore` in .gitattributes (see git help gitattributes)
 
-PLUGINNAME := ICEYE_toolbox
+PLUGINNAME := iceye_toolbox
 IMAGE      := qgis-test:latest
 WORKDIR    := /plugins/$(PLUGINNAME)
 
 USER_QGIS_PLUGINS := $(HOME)/.local/share/QGIS/QGIS3/profiles/default/python/plugins
 
-ifeq ($(notdir $(CURDIR)),ICEYE_toolbox)
+ifeq ($(notdir $(CURDIR)),iceye_toolbox)
 PLUGIN_PARENT ?= $(abspath $(CURDIR)/..)
-else ifeq ($(shell test -e "$(USER_QGIS_PLUGINS)/ICEYE_toolbox" && echo yes),yes)
+else ifeq ($(shell test -e "$(USER_QGIS_PLUGINS)/iceye_toolbox" && echo yes),yes)
 PLUGIN_PARENT ?= $(USER_QGIS_PLUGINS)
 else
 PLUGIN_PARENT ?= $(abspath $(CURDIR)/..)
