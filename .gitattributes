@@ -1,2 +1,23 @@
 test/**/*.tif filter=lfs diff=lfs merge=lfs -text
 test/*.tif filter=lfs diff=lfs merge=lfs -text
+
+# Omitted from plugin zips (git archive / make package); see git help gitattributes
+test/ export-ignore
+.github/ export-ignore
+.dockerignore export-ignore
+Dockerfile export-ignore
+Makefile export-ignore
+install.sh export-ignore
+install.ps1 export-ignore
+plugin_upload.py export-ignore
+pb_tool.cfg export-ignore
+.pre-commit-config.yaml export-ignore
+pyproject.toml export-ignore
+release-please-config.json export-ignore
+.release-please-manifest.json export-ignore
+CONTRIBUTING.md export-ignore
+run_cli.sh export-ignore
+run_tests.sh export-ignore
+run_tests_interactive.sh export-ignore
+scripts/ export-ignore
+help/ export-ignore
