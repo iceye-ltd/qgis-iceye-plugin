@@ -9,7 +9,7 @@ import pytest
 from osgeo import gdal
 from qgis.core import QgsProject, QgsRasterLayer, QgsRectangle
 
-from ICEYE_toolbox.core.cropper import (
+from iceye_toolbox.core.cropper import (
     CropLayerTask,
     CropTool,
     MaskLayerFactory,

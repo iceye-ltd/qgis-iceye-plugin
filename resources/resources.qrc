@@ -1,5 +1,5 @@
 <RCC>
-    <qresource prefix="/plugins/ICEYEToolbox" >
+    <qresource prefix="/plugins/iceye_toolbox" >
         <file>icon.png</file>
         <file>sar_angles.png</file>
         <file>shadows_down_label.svg</file>
@@ -21,7 +21,7 @@
         <file>batch_masks.svg</file>
         <file>batch_process.svg</file>
     </qresource>
-    <qresource prefix="/plugins/ICEYEToolbox/styles">
+    <qresource prefix="/plugins/iceye_toolbox/styles">
         <file>iceye_default.qml</file>
     </qresource>
 </RCC>

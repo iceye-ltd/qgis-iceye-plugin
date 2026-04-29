@@ -49,7 +49,7 @@ from .gui.toolbar_button_policy import ToolbarButtonPolicy
 from .resources.resources import *
 
 
-class ICEYEToolbox:
+class IceyeToolbox:
     """QGIS Plugin Implementation."""
 
     def __init__(self, iface) -> None:
@@ -68,7 +68,7 @@ class ICEYEToolbox:
 
         # initialize locale
         locale = QSettings().value("locale/userLocale")[0:2]
-        locale_path = self.plugin_dir / "i18n" / f"ICEYEToolbox_{locale}.qm"
+        locale_path = self.plugin_dir / "i18n" / f"iceye_toolbox_{locale}.qm"
 
         if locale_path.exists():
             self.translator = QTranslator()
@@ -223,7 +223,7 @@ class ICEYEToolbox:
         self.measuring_toolbar_action.setup()
         self.batch_toolbar_action.setup()
         self.stac_catalog_action = self.add_action(
-            icon_path=":/plugins/ICEYEToolbox/catalog-svgrepo-com.svg",
+            icon_path=":/plugins/iceye_toolbox/catalog-svgrepo-com.svg",
             text=self.tr("Toggle STAC Catalog"),
             callback=self.toggle_stac_catalog_widget,
             parent=self.iface.mainWindow(),
@@ -250,7 +250,7 @@ class ICEYEToolbox:
 
         # # Export actions
         self.export_layer_action = self.add_action(
-            icon_path=":/plugins/ICEYEToolbox/export-svgrepo-com.svg",
+            icon_path=":/plugins/iceye_toolbox/export-svgrepo-com.svg",
             text=self.tr("Export Layer"),
             callback=lambda: self.export_tool.export_layer(
                 layer=self.iface.activeLayer()
@@ -265,7 +265,7 @@ class ICEYEToolbox:
         self.toolbar_button_policy.refresh()
 
         self.add_action(
-            icon_path=":/plugins/ICEYEToolbox/screenshot-svgrepo-com.svg",
+            icon_path=":/plugins/iceye_toolbox/screenshot-svgrepo-com.svg",
             text=self.tr("Screenshot canvas"),
             callback=lambda: self.export_tool.export_canvas(
                 iface=self.iface, canvas=self.iface.mapCanvas()

@@ -10,10 +10,10 @@ from qgis.PyQt.QtWidgets import QAction, QActionGroup, QMenu, QToolButton
 
 from .toolbar_button_policy import ToolbarButtonPolicy
 
-_CROP_ICON = ":/plugins/ICEYEToolbox/crop-simple-svgrepo-com.svg"
-_FOCUS_ICON = ":/plugins/ICEYEToolbox/focus-horizontal-round-round-840-svgrepo-com.svg"
-_VIDEO_ICON = ":/plugins/ICEYEToolbox/video-1-svgrepo-com.svg"
-_COLOR_ICON = ":/plugins/ICEYEToolbox/rgb-svgrepo-com.svg"
+_CROP_ICON = ":/plugins/iceye_toolbox/crop-simple-svgrepo-com.svg"
+_FOCUS_ICON = ":/plugins/iceye_toolbox/focus-horizontal-round-round-840-svgrepo-com.svg"
+_VIDEO_ICON = ":/plugins/iceye_toolbox/video-1-svgrepo-com.svg"
+_COLOR_ICON = ":/plugins/iceye_toolbox/rgb-svgrepo-com.svg"
 
 # Mode key -> overlay resource (None = base crop only)
 _MODE_OVERLAY = {

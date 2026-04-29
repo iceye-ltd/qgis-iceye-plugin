@@ -19,9 +19,9 @@ Examples
 
 Environment
 -----------
-  PYTHONPATH must include the parent directory of the ``ICEYE_toolbox`` package
+  PYTHONPATH must include the parent directory of the ``iceye_toolbox`` package
   (same as pytest in Docker: ``PYTHONPATH=/plugins`` when the repo is mounted at
-  ``/plugins/ICEYE_toolbox``).
+  ``/plugins/iceye_toolbox``).
 
   QT_QPA_PLATFORM=offscreen is set automatically if unset.
 """
@@ -37,11 +37,11 @@ from pathlib import Path
 
 def _ensure_package_on_path() -> None:
     try:
-        import ICEYE_toolbox  # noqa: F401
+        import iceye_toolbox  # noqa: F401
     except ImportError:
         print(
-            "Could not import ICEYE_toolbox. Set PYTHONPATH to the directory that "
-            "contains the ICEYE_toolbox package (e.g. in Docker: PYTHONPATH=/plugins).",
+            "Could not import iceye_toolbox. Set PYTHONPATH to the directory that "
+            "contains the iceye_toolbox package (e.g. in Docker: PYTHONPATH=/plugins).",
             file=sys.stderr,
         )
         sys.exit(1)
@@ -85,7 +85,7 @@ def _load_raster(path: Path):
             "If you use ./run_cli.sh inside Docker, only paths under the repo mount "
             "exist unless you also mount your data directory. Example:\n"
             "  ICEYE_CLI_DATA_ROOT=/path/to/data ./run_cli.sh crop --output-dir /tmp/out \\\n"
-            "    /iceye_data/your.tif /plugins/ICEYE_toolbox/test/fixtures/minimal_roi.kml",
+            "    /iceye_data/your.tif /plugins/iceye_toolbox/test/fixtures/minimal_roi.kml",
             file=sys.stderr,
         )
         sys.exit(1)
@@ -130,7 +130,7 @@ def _extent_from_kml(raster_layer, kml_path: Path):
 
 
 def _identity_crop_task(raster_layer, extent):
-    from ICEYE_toolbox.core.cropper import CropLayerTask
+    from iceye_toolbox.core.cropper import CropLayerTask
 
     crop_task = CropLayerTask(raster_layer, extent)
     crop_task.result_layer = raster_layer
@@ -138,7 +138,7 @@ def _identity_crop_task(raster_layer, extent):
 
 
 def _run_real_crop(raster_layer, extent):
-    from ICEYE_toolbox.core.cropper import CropLayerTask
+    from iceye_toolbox.core.cropper import CropLayerTask
 
     crop_task = CropLayerTask(raster_layer, extent)
     ok = crop_task.run()
@@ -184,8 +184,8 @@ def _maybe_move_output(src_uri: str, output_dir: Path) -> Path:
 
 def cmd_video(args: argparse.Namespace) -> None:
     """Run slow-time video (SHORT multiband GeoTIFF)."""
-    from ICEYE_toolbox.core.metadata import MetadataProvider
-    from ICEYE_toolbox.core.video import VideoProcessingTask
+    from iceye_toolbox.core.metadata import MetadataProvider
+    from iceye_toolbox.core.video import VideoProcessingTask
 
     input_path = Path(args.input_tif).resolve()
     output_dir = _resolve_output_dir(input_path, args.output_dir)
@@ -234,8 +234,8 @@ def cmd_video(args: argparse.Namespace) -> None:
 
 def cmd_color(args: argparse.Namespace) -> None:
     """Run color composite (RGB GeoTIFF)."""
-    from ICEYE_toolbox.core.color import ColorTask
-    from ICEYE_toolbox.core.metadata import MetadataProvider
+    from iceye_toolbox.core.color import ColorTask
+    from iceye_toolbox.core.metadata import MetadataProvider
 
     input_path = Path(args.input_tif).resolve()
     output_dir = _resolve_output_dir(input_path, args.output_dir)
@@ -277,8 +277,8 @@ def cmd_color(args: argparse.Namespace) -> None:
 
 def cmd_focus(args: argparse.Namespace) -> None:
     """Run autofocus (FOCUS GeoTIFF)."""
-    from ICEYE_toolbox.core.autofocus import AutofocusTask
-    from ICEYE_toolbox.core.metadata import MetadataProvider
+    from iceye_toolbox.core.autofocus import AutofocusTask
+    from iceye_toolbox.core.metadata import MetadataProvider
 
     input_path = Path(args.input_tif).resolve()
     output_dir = _resolve_output_dir(input_path, args.output_dir)

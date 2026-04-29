@@ -55,7 +55,7 @@ def _find_alpha_band(layer: QgsRasterLayer) -> int | None:
 class AutoStyler(QObject):
     """Apply default styles and temporal properties to ICEYE layers on add."""
 
-    DEFAULT_QML = ":/plugins/ICEYEToolbox/styles/iceye_default.qml"
+    DEFAULT_QML = ":/plugins/iceye_toolbox/styles/iceye_default.qml"
 
     def __init__(self, iface, metadata_provider=None):
         super().__init__()

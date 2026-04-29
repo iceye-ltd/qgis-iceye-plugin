@@ -7,9 +7,9 @@ import pytest
 from qgis.core import QgsRasterLayer, QgsRectangle
 from qgis.PyQt.QtGui import QImage
 
-from ICEYE_toolbox.core.cropper import get_extend_image_coords
-from ICEYE_toolbox.core.metadata import MetadataProvider
-from ICEYE_toolbox.gui.lens_tool import (
+from iceye_toolbox.core.cropper import get_extend_image_coords
+from iceye_toolbox.core.metadata import MetadataProvider
+from iceye_toolbox.gui.lens_tool import (
     LensMapTool,
     _process_color_spectrum,
     _process_focus_data,

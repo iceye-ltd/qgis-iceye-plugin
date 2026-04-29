@@ -8,9 +8,9 @@ import pytest
 from osgeo import gdal
 from qgis.core import QgsRasterLayer
 
-from ICEYE_toolbox.core.cropper import CropLayerTask
-from ICEYE_toolbox.core.metadata import IceyeMetadata
-from ICEYE_toolbox.core.video import (
+from iceye_toolbox.core.cropper import CropLayerTask
+from iceye_toolbox.core.metadata import IceyeMetadata
+from iceye_toolbox.core.video import (
     VideoProcessingTask,
     calculate_valid_samples,
     create_multiband_raster,
