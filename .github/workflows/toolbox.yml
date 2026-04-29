@@ -88,23 +88,7 @@ jobs:
           cache-to: type=gha,mode=min
 
       - name: Run tests
-        run: |
-          docker run --rm \
-          --shm-size=2g \
-          -v "${{ github.workspace }}/:/plugins/iceye_toolbox" \
-          -e QT_QPA_PLATFORM=offscreen \
-          -e PYTHONPATH=/plugins:/usr/share/qgis/python/:/usr/share/qgis/python/plugins:/usr/lib/python3/dist-packages/qgis:/usr/share/qgis/python/qgis \
-          -w /plugins/iceye_toolbox \
-          qgis-test:latest \
-          pytest test -v -s --junitxml=test-results/junit.xml
-
-      - name: Upload test results
-        if: always()
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # 7.0.1
-        with:
-          name: test-results
-          path: test-results
-          retention-days: 1
+        run: make docker-test
 
   cleanup:
     name: Cleanup caches
