@@ -18,6 +18,11 @@ from iceye_toolbox.core.cropper import CropLayerTask
 from iceye_toolbox.core.metadata import MetadataProvider
 from iceye_toolbox.core.raster import read_slc_layer
 
+# Golden RGB stacks differ slightly across GDAL / SIMD builds (observed max rel ~5e-3).
+_RGB_RTOL = 5e-3
+_RGB_ATOL = 2e-4
+
+
 # Fixtures
 
 
@@ -101,7 +106,9 @@ class TestColorWorkflow:
             actual_band = actual_ds.GetRasterBand(band_idx)
             expected_data = expected_band.ReadAsArray()
             actual_data = actual_band.ReadAsArray()
-            np.testing.assert_allclose(actual_data, expected_data, rtol=1e-3, atol=1e-5)
+            np.testing.assert_allclose(
+                actual_data, expected_data, rtol=_RGB_RTOL, atol=_RGB_ATOL
+            )
 
         # Cleanup after loop
         result_path = Path(color_task.result_layer.source())
@@ -143,7 +150,9 @@ class TestColorWorkflow:
             actual_band = actual_ds.GetRasterBand(band_idx)
             expected_data = expected_band.ReadAsArray()
             actual_data = actual_band.ReadAsArray()
-            np.testing.assert_allclose(actual_data, expected_data, rtol=1e-3, atol=1e-5)
+            np.testing.assert_allclose(
+                actual_data, expected_data, rtol=_RGB_RTOL, atol=_RGB_ATOL
+            )
 
         # Cleanup after loop
         result_path = Path(color_task.result_layer.source())
@@ -181,7 +190,10 @@ class TestColorFunctions:
             actual_data = actual_band.ReadAsArray()
 
             np.testing.assert_allclose(
-                actual_data, rgb[:, :, band_idx - 1], rtol=1e-3, atol=1e-5
+                actual_data,
+                rgb[:, :, band_idx - 1],
+                rtol=_RGB_RTOL,
+                atol=_RGB_ATOL,
             )
 
     def test_color_image_slow_time(self, base_crop_layer, color_slow_layer):
@@ -211,7 +223,10 @@ class TestColorFunctions:
             actual_data = actual_band.ReadAsArray()
 
             np.testing.assert_allclose(
-                actual_data, rgb[:, :, band_idx - 1], rtol=1e-3, atol=1e-5
+                actual_data,
+                rgb[:, :, band_idx - 1],
+                rtol=_RGB_RTOL,
+                atol=_RGB_ATOL,
             )
 
     def test_create_color_raster_layer(self, base_crop_layer):
