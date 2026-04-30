@@ -19,7 +19,7 @@ help:
 	@echo "  make uninstall [INSTALL_OS=<os>]   Remove that symlink (INSTALL_OS must match the install)"
 
 test:
-	QGIS_VERSION=$(QGIS_VERSION) WORKSPACE=$(WORKSPACE) docker-compose -f docker-compose.yml run qgis /usr/src/iceye_toolbox/test.sh
+	QGIS_VERSION=$(QGIS_VERSION) WORKSPACE=$(WORKSPACE) docker compose -f docker-compose.yml run qgis /usr/src/iceye_toolbox/test.sh
 
 package:
 	@test -n "$(VERSION)" || (echo "Set VERSION, e.g. make package VERSION=v1.0.0" && false)
