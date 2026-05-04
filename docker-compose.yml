@@ -1,0 +1,12 @@
+version: '3'
+services:
+  qgis:
+    build:
+      context: .
+      dockerfile: ./Dockerfile
+      args:
+        QGIS_VERSION: ${QGIS_VERSION}
+    tty: true
+    working_dir: /usr/src/iceye_toolbox
+    volumes:
+      - ${WORKSPACE}:/usr/src/iceye_toolbox

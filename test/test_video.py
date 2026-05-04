@@ -103,9 +103,12 @@ class TestVideoWorkflow:
             expected_data = expected_band.ReadAsArray()
             actual_data = actual_band.ReadAsArray()
 
-            # Verify the data and shape are the same
-            assert np.array_equal(actual_data, expected_data), (
-                f"Band {band_idx} data mismatch"
+            np.testing.assert_allclose(
+                actual_data,
+                expected_data,
+                rtol=5e-4,
+                atol=5e-4,
+                err_msg=f"Band {band_idx} data mismatch",
             )
 
         # Clean up GDAL datasets

@@ -1,4 +1,4 @@
-name: ICEYE Toolbox CI
+name: Testing
 
 on:
   pull_request:
@@ -8,10 +8,12 @@ on:
       - '**.py'
       - 'pyproject.toml'
       - 'requirements*.txt'
-      - '.github/workflows/toolbox.yml'
+      - '.github/workflows/testing.yml'
       - '.gitattributes'
       - 'test/fixtures/**'
       - 'Dockerfile'
+      - 'docker-compose.yml'
+      - 'Makefile'
       - 'test/pytest.ini'
 
 concurrency:
@@ -39,7 +41,7 @@ jobs:
         working-directory: ${{ github.workspace }}
 
   format:
-    name: Format check
+    name: Format
     if: github.event.action != 'closed'
     runs-on: ubuntu-latest
     steps:
@@ -62,13 +64,6 @@ jobs:
     if: github.event.action != 'closed'
     runs-on: ubuntu-latest
     steps:
-      - name: Free disk space
-        run: |
-          sudo rm -rf /usr/local/lib/android
-          sudo rm -rf /usr/share/dotnet
-          sudo rm -rf /opt/ghc
-          sudo rm -rf /usr/local/share/boost
-          sudo rm -rf "$AGENT_TOOLSDIRECTORY"
 
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # 6.0.2
         with:
@@ -76,44 +71,5 @@ jobs:
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@4d04d5d9486b7bd6fa91e7baf45bbb4f8b9deedd # 4.0.0
-
-      - name: Build Docker image
-        uses: docker/build-push-action@bcafcacb16a39f128d818304e6c9c0c18556b85f # 7.1.0
-        with:
-          context: .
-          file: ./Dockerfile
-          tags: qgis-test:latest
-          load: true
-          cache-from: type=gha
-          cache-to: type=gha,mode=min
-
       - name: Run tests
-        run: |
-          docker run --rm \
-          --shm-size=2g \
-          -v "${{ github.workspace }}/:/plugins/iceye_toolbox" \
-          -e QT_QPA_PLATFORM=offscreen \
-          -e PYTHONPATH=/plugins:/usr/share/qgis/python/:/usr/share/qgis/python/plugins:/usr/lib/python3/dist-packages/qgis:/usr/share/qgis/python/qgis \
-          -w /plugins/iceye_toolbox \
-          qgis-test:latest \
-          pytest test -v -s --junitxml=test-results/junit.xml
-
-      - name: Upload test results
-        if: always()
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # 7.0.1
-        with:
-          name: test-results
-          path: test-results
-          retention-days: 1
-
-  cleanup:
-    name: Cleanup caches
-    if: github.event.action == 'closed'
-    runs-on: ubuntu-latest
-    steps:
-      - name: Delete PR caches
-        run: |
-          echo "Cleaning up caches for closed PR"
-          gh cache delete --all --repo ${{ github.repository }} || echo "No caches to delete"
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: make test
