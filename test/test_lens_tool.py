@@ -1,7 +1,5 @@
 """Tests for lens_tool module."""
 
-from pathlib import Path
-
 import numpy as np
 import pytest
 from qgis.core import QgsRasterLayer, QgsRectangle
@@ -20,17 +18,10 @@ from iceye_toolbox.gui.lens_tool import (
 
 
 @pytest.fixture
-def test_render_file():
-    """Path to the 4096-pixel render reference raster."""
-    test_dir = Path(__file__).resolve().parent
-    return str(test_dir / "test-output4096.tif")
-
-
-@pytest.fixture
-def test_render_layer(test_render_file):
-    """QgsRasterLayer loaded from the 4096-pixel render reference raster."""
-    layer = QgsRasterLayer(test_render_file, "ICEYE_TEST_RENDER")
-    assert layer.isValid(), f"Failed to load test raster: {test_render_file}"
+def test_render_layer(base_crop_file: str):
+    """QgsRasterLayer from the WWGTZ2 crop fixture (same provenance as read_slc_layer tests)."""
+    layer = QgsRasterLayer(base_crop_file, "ICEYE_TEST_RENDER")
+    assert layer.isValid(), f"Failed to load test raster: {base_crop_file}"
     return layer
 
 

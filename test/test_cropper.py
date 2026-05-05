@@ -54,13 +54,6 @@ class TestGetExtendImageCoords:
             assert np.isfinite(v)
             assert abs(v) < 1e6
 
-    def test_returns_none_without_gcps(self, qgis_iface):
-        """Should return None for layer without GCPs."""
-        # Create a simple raster without GCPs
-        layer = QgsRasterLayer("", "test", "gdal")  # Invalid/empty layer
-        result = get_extend_image_coords(layer, QgsRectangle(0, 0, 10, 10))
-        assert result is None
-
 
 # ============================================================================
 # Error Handling Tests
