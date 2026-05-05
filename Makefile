@@ -24,7 +24,7 @@ test:
 package:
 	@test -n "$(VERSION)" || (echo "Set VERSION, e.g. make package VERSION=v1.0.0" && false)
 	rm -f $(PLUGINNAME).zip
-	git archive --format=zip --prefix=$(PLUGINNAME)/ -o $(PLUGINNAME).zip $(VERSION)
+	git archive --worktree-attributes --format=zip --prefix=$(PLUGINNAME)/ -o $(PLUGINNAME).zip $(VERSION)
 	@echo "Created $(PLUGINNAME).zip from $(VERSION)"
 
 install:
