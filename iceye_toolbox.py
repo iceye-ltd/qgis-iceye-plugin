@@ -278,17 +278,18 @@ class IceyeToolbox:
 
     # --------------------------------------------------------------------------
 
-    def onClosePlugin(self) -> None:
-        """Clean up when plugin dock widget is closed."""
-        # print "** CLOSING ICEYE Tool Box"
+    def onClosePlugin(self, event=None) -> None:
+        """Handle metadata dock close (Qt passes ``event``) or legacy main dock cleanup."""
+        if event is not None:
+            event.accept()
+            return
 
-        # disconnects
-        self.dockwidget.closing_plugin.disconnect(self.onClosePlugin)
-
-        # remove this statement if dockwidget is to remain
-        # for reuse if plugin is reopened
-        # Commented next statement since it causes QGIS crashe
-        # when closing the docked window:
+        dockwidget = getattr(self, "dockwidget", None)
+        if dockwidget is not None:
+            try:
+                dockwidget.closing_plugin.disconnect(self.onClosePlugin)
+            except TypeError:
+                pass
         self.dockwidget = None
         self.crop_dockwidget = None
         self.metadata_widget = None
