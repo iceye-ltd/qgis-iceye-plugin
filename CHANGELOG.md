@@ -5,6 +5,19 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.1.1](https://github.com/iceye-ltd/qgis-iceye-plugin/compare/v0.1.0...v0.1.1) (2026-05-11)
+
+
+### ### Fixed
+
+* handle QCloseEvent when closing metadata dockwidget ([#10](https://github.com/iceye-ltd/qgis-iceye-plugin/issues/10)) ([d244c9c](https://github.com/iceye-ltd/qgis-iceye-plugin/commit/d244c9c660451e8b0d1d2a73322f4d6da20ebdfe))
+* use gitattritubes to exclude fixtures and tests ([#9](https://github.com/iceye-ltd/qgis-iceye-plugin/issues/9)) ([bae471a](https://github.com/iceye-ltd/qgis-iceye-plugin/commit/bae471a99c492201b3ca2688fc36040574eb049b))
+
+
+### ### Changed
+
+* use iceye_tooblox name consistently ([#5](https://github.com/iceye-ltd/qgis-iceye-plugin/issues/5)) ([df55201](https://github.com/iceye-ltd/qgis-iceye-plugin/commit/df55201dadf91031d6093c20df1f0db9c9a510c6))
+
 ## [Unreleased]
 
 ## [0.1.0] - 2025-02-25
