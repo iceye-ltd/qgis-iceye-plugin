@@ -13,7 +13,13 @@
         { "type": "chore", "section": "### Changed", "hidden": true }
       ],
       "include-v-in-tag": true,
-      "include-v-in-release-name": true
+      "include-v-in-release-name": true,
+      "extra-files": [
+        {
+          "type": "generic",
+          "path": "metadata.txt"
+        }
+      ]
     }
   }
 }
