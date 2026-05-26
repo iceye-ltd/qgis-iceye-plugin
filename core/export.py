@@ -5,15 +5,12 @@ from __future__ import annotations
 import shutil
 import subprocess
 import tempfile
-from collections.abc import Iterator
 from functools import partial
 from pathlib import Path
 from typing import Any, Literal
 
-import numpy as np
-from numpy.typing import NDArray
 from PyQt5.QtCore import QSize, Qt
-from PyQt5.QtGui import QColor, QImage
+from PyQt5.QtGui import QColor
 from PyQt5.QtWidgets import QFileDialog
 from qgis.core import (
     Qgis,
@@ -27,8 +24,6 @@ from qgis.core import (
     QgsTask,
 )
 from qgis.gui import QgsMapCanvas
-
-from iceye_toolbox.core.raster import read_all_band_from_layer
 
 from ..gui.export_dialog import ExportDialog
 

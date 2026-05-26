@@ -12,21 +12,16 @@ from qgis.core import (
     QgsPointXY,
     QgsProject,
 )
-from qgis.PyQt.QtCore import QCoreApplication, QEvent, QPointF, Qt
-from qgis.PyQt.QtGui import QBrush, QColor, QFont, QIcon, QPainter, QPainterPath, QPen
+from qgis.PyQt.QtCore import QCoreApplication, QPointF, Qt
+from qgis.PyQt.QtGui import QBrush, QColor, QFont, QIcon, QPainterPath, QPen
 from qgis.PyQt.QtWidgets import (
     QGraphicsItem,
     QGraphicsItemGroup,
     QGraphicsLineItem,
     QGraphicsPathItem,
     QGraphicsTextItem,
-    QHBoxLayout,
-    QLabel,
     QMenu,
-    QPushButton,
     QToolButton,
-    QVBoxLayout,
-    QWidget,
 )
 
 from ..core.geometry import SARViewGeometry, get_geometry_from_metadata

@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-from datetime import datetime
 from pathlib import Path
 from typing import Callable
 
@@ -28,7 +27,7 @@ from .cropper import (
 )
 from .metadata import IceyeMetadata
 from .raster import read_slc_layer
-from .video import calculate_valid_samples, create_multiband_raster, write_frame_to_band
+from .video import create_multiband_raster, write_frame_to_band
 
 
 class ColorTool:

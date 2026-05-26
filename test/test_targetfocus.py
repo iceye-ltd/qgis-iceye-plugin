@@ -6,7 +6,7 @@ from pathlib import Path
 import numpy as np
 import pytest
 from osgeo import gdal
-from qgis.core import QgsRasterLayer, QgsRectangle
+from qgis.core import QgsRasterLayer
 
 from iceye_toolbox.core.autofocus import (
     AutofocusTask,
