@@ -59,4 +59,3 @@ known-first-party = ["iceye_toolbox"]
 
 [tool.ruff.format]
 quote-style = "double"
-

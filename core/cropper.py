@@ -318,7 +318,9 @@ class CropLayerTask(QgsTask):
         else:
             base_name = self.layer.name().rsplit("_", 1)[0]
 
-        m = hashlib.sha1(self.extent.toString().encode(), usedforsecurity=False).hexdigest()[:8]
+        m = hashlib.sha1(
+            self.extent.toString().encode(), usedforsecurity=False
+        ).hexdigest()[:8]
         result_name = base_name + "_CROP_" + m
         raster = QgsRasterLayer(self.result_path, result_name)
         if not raster.isValid():

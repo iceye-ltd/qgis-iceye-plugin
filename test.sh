@@ -4,4 +4,4 @@ set -euo pipefail
 
 echo $(pwd)
 
-xvfb-run pytest test -v -s 
+xvfb-run pytest test -v -s
