@@ -88,6 +88,8 @@ def fetch_item(item_url: str, force_refresh: bool = False) -> dict[str, Any]:
 
 def _fetch_json(url: str) -> dict[str, Any]:
     """Fetch JSON from URL and parse as dict."""
+    if urlparse(url).scheme != "https":
+        raise ValueError(f"Only HTTPS URLs are permitted, got: {url!r}")
     request = Request(url, headers={"User-Agent": "ICEYE-QGIS-Plugin"})
     with urlopen(request, timeout=30) as response:
         payload = response.read().decode("utf-8")
