@@ -5,10 +5,10 @@ from __future__ import annotations
 from pathlib import Path
 
 import pytest
-from qgis.core import QgsCoordinateReferenceSystem, QgsRasterLayer, QgsRectangle
+from qgis.core import QgsCoordinateReferenceSystem, QgsRasterLayer
 from qgis.gui import QgsMapCanvas
 
-from iceye_toolbox.core.metadata import IceyeMetadata, MetadataProvider
+from iceye_toolbox.core.metadata import MetadataProvider
 from iceye_toolbox.core.raster import read_slc_layer
 
 # Bundled regression rasters (see test/fixtures/).

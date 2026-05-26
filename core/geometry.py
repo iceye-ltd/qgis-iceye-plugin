@@ -235,7 +235,7 @@ class SARViewGeometry:
 
     def deduce_orbital_node(self, VEL: NDArray[np.float64]) -> str:
         """Return orbital node from velocity: "ascending", "descending", or "unknown"."""
-        ## TODO validate
+        # TODO validate
         if VEL[-1] > 0:
             orbital_node = "ascending"
         elif VEL[-1] < 0:

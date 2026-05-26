@@ -8,10 +8,10 @@ __license__ = "GPL"
 __copyright__ = "Copyright 2012, Australia Indonesia Facility for "
 __copyright__ += "Disaster Reduction"
 
-import configparser
-import logging
-import unittest
-from pathlib import Path
+import configparser  # noqa: E402
+import logging  # noqa: E402
+import unittest  # noqa: E402
+from pathlib import Path  # noqa: E402
 
 LOGGER = logging.getLogger("QGIS")
 
