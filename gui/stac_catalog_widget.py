@@ -147,6 +147,8 @@ class StacSlcSingleDownloadTask(QgsTask):
 
     def _download(self) -> bool:
         """Download file from URL."""
+        if urlparse(self.url).scheme != "https":
+            raise ValueError(f"Only HTTPS URLs are permitted, got: {self.url!r}")
         request = Request(self.url, headers={"User-Agent": "ICEYE-QGIS-Plugin"})
         with (
             urlopen(request, timeout=60) as response,
@@ -292,6 +294,8 @@ class StacItemsQlkTask(QgsTask):
     def _download_file_with_progress(
         self, url: str, destination: str, item_index: int, total_items: int
     ) -> bool:
+        if urlparse(url).scheme != "https":
+            raise ValueError(f"Only HTTPS URLs are permitted, got: {url!r}")
         request = Request(url, headers={"User-Agent": "ICEYE-QGIS-Plugin"})
         try:
             with (

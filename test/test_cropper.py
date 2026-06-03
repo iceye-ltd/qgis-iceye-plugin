@@ -1,13 +1,10 @@
 # coding=utf-8
 """Tests for cropper module."""
 
-import shutil
-from pathlib import Path
-
 import numpy as np
 import pytest
 from osgeo import gdal
-from qgis.core import QgsProject, QgsRasterLayer, QgsRectangle
+from qgis.core import QgsProject, QgsRectangle
 
 from iceye_toolbox.core.cropper import (
     CropLayerTask,

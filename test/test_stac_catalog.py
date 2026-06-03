@@ -1,7 +1,6 @@
 # coding=utf-8
 """Tests for STAC catalog widget, including Load Preview / QLK behavior."""
 
-from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import pytest

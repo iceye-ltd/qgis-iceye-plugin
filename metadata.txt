@@ -8,7 +8,7 @@
 name=iceye_toolbox
 qgisMinimumVersion=3.0
 description=Collection of ICEYE SAR tools for STAC browsing, SLC analysis, focusing, export, and visualization in QGIS
-version=0.1.0
+version=0.1.2 # x-release-please-version
 author=Santeri Kuronen
 email=santeri.kuronen@iceye.com
 

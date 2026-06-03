@@ -18,15 +18,16 @@ def test_generate_expected_values(metadata):
     generate_geometry_expected_values(metadata)
     pytest.skip("Generated expected values, skipping test")
 
+
 def generate_geometry_expected_values(metadata, output_file=None):
     """
     Run this once to generate expected values for geometry tests.
-    
+
     Usage:
         # In your test or as a standalone script:
         from conftest import metadata
         generate_geometry_expected_values(metadata)
-        
+
     Or to just print without saving:
         generate_geometry_expected_values(metadata, output_file=None)
     """

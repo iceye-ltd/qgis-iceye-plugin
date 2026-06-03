@@ -25,9 +25,9 @@
 
 from pathlib import Path
 
-from qgis.PyQt.QtCore import QCoreApplication, QSettings, Qt, QTimer, QTranslator
+from qgis.PyQt.QtCore import QCoreApplication, QSettings, Qt, QTranslator
 from qgis.PyQt.QtGui import QIcon
-from qgis.PyQt.QtWidgets import QAction, QToolBar
+from qgis.PyQt.QtWidgets import QAction
 
 from .core.auto_styler import AutoStyler
 from .core.autofocus import AutofocusTool
@@ -46,7 +46,7 @@ from .gui.stac_catalog_widget import StacCatalogWidget
 from .gui.toolbar_button_policy import ToolbarButtonPolicy
 
 # Initialize Qt resources from file resources.py
-from .resources.resources import *
+from .resources.resources import *  # noqa: F401, F403
 
 
 class IceyeToolbox:
