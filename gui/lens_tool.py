@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import math
+import tempfile
 import uuid
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
@@ -37,12 +38,18 @@ from qgis.PyQt.QtGui import QBrush, QColor, QIcon, QImage, QKeySequence, QPen, Q
 from qgis.PyQt.QtWidgets import (
     QAction,
     QActionGroup,
+    QFrame,
     QGraphicsItemGroup,
     QGraphicsPixmapItem,
     QGraphicsRectItem,
+    QHBoxLayout,
+    QLabel,
     QMenu,
     QShortcut,
+    QSlider,
     QToolButton,
+    QVBoxLayout,
+    QWidget,
 )
 
 from ..core.autofocus import (
@@ -69,8 +76,14 @@ _SLC_RENDER_MODES = frozenset(
         "range_spectrum",
         "azimuth_viewer",
         "range_viewer",
+        "kpa",
     }
 )
+
+
+def _tr(message: str) -> str:
+    """Translate message for ICEYE Toolbox context."""
+    return QCoreApplication.translate("ICEYE Toolbox", message)
 
 
 def compute_lens_extent(
@@ -177,6 +190,39 @@ class LensOverlayItem(QGraphicsItemGroup):
         if image is None:
             return
         self._pixmap_item.setPixmap(QPixmap.fromImage(image))
+
+
+class KPAControlsPanel(QFrame):
+    """Floating KPA coefficient sliders shown beside the lens overlay."""
+
+    def __init__(self, parent: QWidget | None = None) -> None:
+        super().__init__(parent)
+        self.setFrameShape(QFrame.StyledPanel)
+        self.setAutoFillBackground(True)
+        self.setFixedWidth(220)
+
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(8, 10, 8, 10)
+        layout.setSpacing(8)
+        self.setMinimumHeight(78)
+
+        linear_row = QHBoxLayout()
+        linear_row.addWidget(QLabel(_tr("L")))
+        self.linear_slider = QSlider(Qt.Horizontal)
+        self.linear_slider.setRange(-1000, 1000)
+        self.linear_slider.setValue(0)
+        self.linear_slider.setToolTip(_tr("KPA linear phase coefficient (a1)"))
+        linear_row.addWidget(self.linear_slider)
+        layout.addLayout(linear_row)
+
+        quadratic_row = QHBoxLayout()
+        quadratic_row.addWidget(QLabel(_tr("Q")))
+        self.quadratic_slider = QSlider(Qt.Horizontal)
+        self.quadratic_slider.setRange(-1000, 1000)
+        self.quadratic_slider.setValue(0)
+        self.quadratic_slider.setToolTip(_tr("KPA quadratic phase coefficient (a2)"))
+        quadratic_row.addWidget(self.quadratic_slider)
+        layout.addLayout(quadratic_row)
 
 
 @dataclass
@@ -393,6 +439,373 @@ def render_georeferenced_data(
     return image
 
 
+KPA_DOPPLER_SPECTRA_PLOT_PATH = (
+    Path(tempfile.gettempdir()) / "iceye_kpa_doppler_spectra.png"
+)
+KPA_LOOKS_PLOT_PATH = Path(tempfile.gettempdir()) / "iceye_kpa_looks_after.png"
+KPA_LOOK_AMPLITUDE_PATH = Path(tempfile.gettempdir()) / "iceye_kpa_look_amplitude.png"
+KPA_CORRECTED_AMPLITUDE_PATH = (
+    Path(tempfile.gettempdir()) / "iceye_kpa_corrected_amplitude.png"
+)
+
+
+def _kpa_doppler_spectrum(data: NDArray[np.complex64]) -> NDArray[np.floating[Any]]:
+    """Return log-magnitude Doppler (azimuth FFT) spectrum for complex SLC data."""
+    doppler_spectrum = np.fft.fftshift(np.fft.fft(data, axis=0), axes=0)
+    return np.log10(np.abs(doppler_spectrum) + 1e-10)
+
+
+def _save_kpa_doppler_spectra(
+    data_before: NDArray[np.complex64],
+    data_after: NDArray[np.complex64],
+    *,
+    a1: float = 0.0,
+    a2: float = 0.0,
+) -> Path | None:
+    """Save Doppler spectra before and after KPA compensation."""
+    try:
+        import matplotlib
+
+        matplotlib.use("Agg")
+        import matplotlib.pyplot as plt
+    except ImportError:
+        QgsMessageLog.logMessage(
+            "matplotlib is not available; KPA Doppler spectrum plots were not saved",
+            "ICEYE Toolbox",
+            level=Qgis.Warning,
+        )
+        return None
+
+    coeff_suffix = f"(a1={a1:.3f}, a2={a2:.3f})"
+    panels = (
+        ("before KPA", _kpa_doppler_spectrum(data_before)),
+        ("after KPA", _kpa_doppler_spectrum(data_after)),
+    )
+
+    fig, axes = plt.subplots(1, 2, figsize=(12, 5))
+
+    for ax, (label, log_doppler) in zip(axes, panels, strict=True):
+        ax.imshow(log_doppler, cmap="gray", aspect="auto", origin="lower")
+        ax.set_title(f"Doppler spectrum {label} {coeff_suffix}")
+        ax.set_xlabel("Range")
+        ax.set_ylabel("Azimuth frequency")
+
+    fig.tight_layout()
+    try:
+        fig.savefig(KPA_DOPPLER_SPECTRA_PLOT_PATH, dpi=150, bbox_inches="tight")
+    except OSError as exc:
+        QgsMessageLog.logMessage(
+            f"Failed to save KPA Doppler spectrum plots: {exc}",
+            "ICEYE Toolbox",
+            level=Qgis.Warning,
+        )
+        plt.close(fig)
+        return None
+    plt.close(fig)
+    return KPA_DOPPLER_SPECTRA_PLOT_PATH
+
+
+def _extract_kpa_centered_look(
+    compensated_data: NDArray[np.complex64],
+) -> NDArray[np.complex64]:
+    """Extract centered azimuth look from KPA-compensated data (same size as PGA focus)."""
+    spectrum = np.fft.fftshift(np.fft.fft2(compensated_data))
+    rows, cols = spectrum.shape
+    azimuth_look_size = max(1, int(rows * 0.025))
+    return extract_centered_look(
+        spectrum,
+        center_row=rows // 2,
+        center_col=cols // 2,
+        look_rows=azimuth_look_size,
+        look_cols=cols,
+        apply_ifftshift=True,
+    )
+
+
+def _save_kpa_looks(
+    compensated_data: NDArray[np.complex64],
+    *,
+    a1: float = 0.0,
+    a2: float = 0.0,
+) -> Path | None:
+    """Save centered azimuth look after KPA compensation."""
+    try:
+        import matplotlib
+
+        matplotlib.use("Agg")
+        import matplotlib.pyplot as plt
+    except ImportError:
+        QgsMessageLog.logMessage(
+            "matplotlib is not available; KPA look plot was not saved",
+            "ICEYE Toolbox",
+            level=Qgis.Warning,
+        )
+        return None
+
+    look = _extract_kpa_centered_look(compensated_data)
+    log_amplitude = np.log10(np.abs(look) + 1e-10)
+    title_suffix = f"after KPA (a1={a1:.3f}, a2={a2:.3f})"
+
+    fig, ax = plt.subplots(figsize=(8, 6))
+    ax.imshow(log_amplitude, cmap="gray", aspect="auto", origin="lower")
+    ax.set_title(f"Centered look {title_suffix}")
+    ax.set_xlabel("Range")
+    ax.set_ylabel("Azimuth")
+
+    fig.tight_layout()
+    try:
+        fig.savefig(KPA_LOOKS_PLOT_PATH, dpi=150, bbox_inches="tight")
+    except OSError as exc:
+        QgsMessageLog.logMessage(
+            f"Failed to save KPA look plot: {exc}",
+            "ICEYE Toolbox",
+            level=Qgis.Warning,
+        )
+        plt.close(fig)
+        return None
+    plt.close(fig)
+    return KPA_LOOKS_PLOT_PATH
+
+
+def _save_kpa_amplitude_plot(
+    data: NDArray[np.complex64],
+    *,
+    output_path: Path,
+    title: str,
+) -> Path | None:
+    """Plot and save linear amplitude image of complex KPA look data."""
+    try:
+        import matplotlib
+
+        matplotlib.use("Agg")
+        import matplotlib.pyplot as plt
+    except ImportError:
+        QgsMessageLog.logMessage(
+            f"matplotlib is not available; {title} plot was not saved",
+            "ICEYE Toolbox",
+            level=Qgis.Warning,
+        )
+        return None
+
+    magnitude = np.abs(data)
+    thresh = np.mean(magnitude) + 4.0 * np.std(magnitude)
+    magnitude = magnitude.copy()
+    magnitude[magnitude > thresh] = thresh
+    if magnitude.size == 0:
+        return None
+
+    normalized = _normalize_to_uint8(magnitude.astype(np.float32))
+
+    fig, ax = plt.subplots(figsize=(8, 6))
+    ax.imshow(normalized, cmap="gray", aspect="auto", origin="lower")
+    ax.set_title(title)
+    ax.set_xlabel("Range")
+    ax.set_ylabel("Azimuth")
+
+    fig.tight_layout()
+    try:
+        fig.savefig(output_path, dpi=150, bbox_inches="tight")
+    except OSError as exc:
+        QgsMessageLog.logMessage(
+            f"Failed to save {title} plot: {exc}",
+            "ICEYE Toolbox",
+            level=Qgis.Warning,
+        )
+        plt.close(fig)
+        return None
+    plt.close(fig)
+    return output_path
+
+
+def _save_kpa_look_amplitude(
+    look: NDArray[np.complex64],
+) -> Path | None:
+    """Save linear amplitude image of a KPA centered look."""
+    return _save_kpa_amplitude_plot(
+        look,
+        output_path=KPA_LOOK_AMPLITUDE_PATH,
+        title="KPA look amplitude",
+    )
+
+
+def _save_kpa_corrected_amplitude(
+    corrected: NDArray[np.complex64],
+) -> Path | None:
+    """Save linear amplitude image after PGA phase correction."""
+    return _save_kpa_amplitude_plot(
+        corrected,
+        output_path=KPA_CORRECTED_AMPLITUDE_PATH,
+        title="KPA corrected amplitude",
+    )
+
+
+def _kpa_slant_range_mid(metadata: Any) -> float | None:
+    """Return scene slant range at mid-swath from metadata (m)."""
+    r0 = getattr(metadata, "iceye_range", None)
+    if r0 is not None:
+        return float(r0)
+    r_near = getattr(metadata, "iceye_range_near", None)
+    r_far = getattr(metadata, "iceye_range_far", None)
+    if r_near is not None and r_far is not None:
+        return 0.5 * (float(r_near) + float(r_far))
+    if r_near is not None:
+        return float(r_near)
+    return None
+
+
+def _kpa_azimuth_sampling_freq(metadata: Any) -> float | None:
+    """Return azimuth sampling frequency (PRF or 1/azimuth_time_interval) in Hz."""
+    faz = getattr(metadata, "iceye_processing_prf", None)
+    if faz is None:
+        faz = getattr(metadata, "iceye_acquisition_prf", None)
+    return None if faz is None else float(faz)
+
+
+def _kpa_incidence_angle_rad(metadata: Any) -> float | None:
+    """Return incidence angle in radians."""
+    theta = getattr(metadata, "view_incidence_angle", None)
+    if theta is None:
+        theta = getattr(metadata, "iceye_incidence_angle_near", None)
+    if theta is None:
+        return None
+    theta = float(theta)
+    if theta > 2.0 * math.pi:
+        theta = math.radians(theta)
+    return theta
+
+
+def _correction_to_velocity(
+    a1: float,
+    a2: float,
+    metadata: Any,
+) -> tuple[float | None, float | None, float | None, float | None]:
+    """Return slant radial, along-track, ground radial, and ground speed (m/s)."""
+    platform_velocity = getattr(metadata, "center_aperture_velocity", None)
+    dr = getattr(metadata, "sar_pixel_spacing_range", None)
+    carrier_freq = getattr(metadata, "sar_center_frequency", None)
+    r0 = _kpa_slant_range_mid(metadata)
+    faz = _kpa_azimuth_sampling_freq(metadata)
+    theta = _kpa_incidence_angle_rad(metadata)
+
+    if (
+        platform_velocity is None
+        or dr is None
+        or carrier_freq is None
+        or r0 is None
+        or faz is None
+        or theta is None
+    ):
+        return None, None, None, None
+    if dr <= 0 or r0 <= 0 or faz <= 0 or carrier_freq <= 0:
+        return None, None, None, None
+
+    c = 299792458.0
+    lam = c / float(carrier_freq)
+    vp = float(np.linalg.norm(platform_velocity))
+    sin_theta = math.sin(theta)
+    if sin_theta <= 0:
+        return None, None, None, None
+
+    QgsMessageLog.logMessage(
+        f"pixel spacing range {dr}, faz {faz}",
+        "ICEYE Toolbox",
+        Qgis.Info
+    )
+
+    v_radial_slant = (2.0 * vp**2 * dr) / (lam * r0 * faz) * a1
+    v_along = (4.0 * vp**3 * dr) / (lam**2 * r0 * faz**2) * a2
+    v_radial_ground = v_radial_slant / sin_theta
+    v_ground = float(np.hypot(v_along, v_radial_ground))
+    return v_radial_slant, v_along, v_radial_ground, v_ground
+
+
+def _log_kpa_velocities(
+    a1: float,
+    a2: float,
+    metadata: Any,
+) -> None:
+    """Log KPA velocity estimates derived from phase correction coefficients."""
+    v_radial_slant, v_along, v_radial_ground, v_ground = _correction_to_velocity(
+        a1, a2, metadata
+    )
+    if v_ground is None:
+        QgsMessageLog.logMessage(
+            f"KPA velocity: skipped (missing metadata) (a1={a1:.3f}, a2={a2:.3f})",
+            "ICEYE Toolbox",
+            level=Qgis.Info,
+        )
+        return
+    
+    QgsMessageLog.logMessage(
+        f"a2: {a2} a2/4 {a2/4}",
+        "ICEYE Toolbox",
+        level=Qgis.Info
+    )
+
+    message = (
+        f"KPA velocity: v_ground={v_ground:.3f} m/s "
+        f"(v_radial_slant={v_radial_slant:.3f}, v_along={v_along:.3f}, "
+        f"v_radial_ground={v_radial_ground:.3f}, a1={a1:.3f}, a2={a2:.3f})"
+    )
+    QgsMessageLog.logMessage(message, "ICEYE Toolbox", level=Qgis.Info)
+
+
+def _process_kpa(
+    data_patch: NDArray[np.complex64], metadata: Any, a1: float = 0.0, a2: float = 0.0
+) -> NDArray[np.uint8]:
+    """Apply look extraction + keystone phase algorithm and return display-ready image"""
+
+    ba, br = data_patch.shape
+
+    
+
+    fa = np.arange(-ba / 2.0, ba / 2.0, 1.0) / ba 
+    fr = np.arange(-br / 2.0, br / 2.0, 1.0) / br
+
+    QgsMessageLog.logMessage(
+        f"ba {ba}, br: {br}, fr {fr}",
+        "ICEYE Toolbox",
+        Qgis.Info
+    )
+
+    Fr, Fa = np.meshgrid(fr, fa)
+
+    a0 = 0
+
+    delta_az = a2 * Fa**2 + a1 * Fa + a0
+
+    phase = np.exp(1j * 2.0 * np.pi *  Fr * delta_az)
+
+    phase = np.fft.fftshift(phase)
+
+    spectrum2d = np.fft.fft2(data_patch)
+
+    compensated_data = np.fft.ifft2(spectrum2d * phase)
+
+    _log_kpa_velocities(a1, a2, metadata)
+    _save_kpa_looks(compensated_data, a1=a1, a2=a2)
+    _save_kpa_doppler_spectra(data_patch, compensated_data, a1=a1, a2=a2)
+
+
+    #magnitude = np.abs(compensated_data)
+
+    look = _extract_kpa_centered_look(compensated_data)
+    _save_kpa_look_amplitude(look)
+    patch, _ = select_pulse_with_strong_target(look, axis=0)
+    phase_error, _, _ = phase_gradient_autofocus(patch)
+    corrected = apply_phase_correction(look, phase_error)
+    _save_kpa_corrected_amplitude(corrected)
+    
+    magnitude = np.abs(corrected)
+    thresh = np.mean(magnitude) + 4.0 * np.std(magnitude)
+    magnitude[magnitude > thresh] = thresh
+    if magnitude.size == 0:
+        return np.zeros((0, 0), dtype=np.uint8)
+    normalized = _normalize_to_uint8(magnitude.astype(np.float32))
+    return _orient_slc_image(
+        normalized, getattr(metadata, "sar_observation_direction", "")
+    )
+
 def _process_focus_data(
     data_patch: NDArray[np.complex64], metadata: Any
 ) -> NDArray[np.uint8]:
@@ -555,6 +968,63 @@ class FocusRenderMode(RenderMode):
             slc.layer,
             slc.extent,
             "temp_focus",
+            overlay_size,
+            canvas,
+        )
+        if img is None:
+            return None
+        return (img, True)
+
+
+class KPAFocusRenderMode(RenderMode):
+    """KPA focus view"""
+
+    mode_name = "kpa"
+
+    def __init__(self) -> None:
+        super().__init__()
+        self._a1 = 0.0
+        self._a2 = 0.0
+
+    def set_coefficients(self, *, a1: float | None = None, a2: float | None = None) -> None:
+        """Update linear (a1) and/or quadratic (a2) KPA phase coefficients."""
+        if a1 is not None:
+            self._a1 = float(a1)
+        if a2 is not None:
+            self._a2 = float(a2)
+
+    def render(
+        self,
+        layer: QgsRasterLayer,
+        extent: QgsRectangle,
+        **kwargs: Any,
+    ) -> tuple[QImage, bool] | None:
+        """Read SLC, Apply KPA, hopefully return a georeferenced image"""
+        metadata_provider = kwargs.get("metadata_provider")
+        canvas = kwargs.get("canvas")
+        overlay_size = int(kwargs.get("overlay_size", 350))
+
+        if metadata_provider is None or canvas is None:
+            return None
+
+        slc = read_slc_data(layer, extent, metadata_provider, with_geo=True)
+
+        if slc is None or slc.data_patch.size == 0 or slc.geo_corners is None:
+            return None
+
+        kpa_result = _process_kpa(
+            slc.data_patch, slc.metadata, a1=self._a1, a2=self._a2
+        )
+
+        if kpa_result.size == 0:
+            return None
+
+        img = render_georeferenced_data(
+            kpa_result,
+            slc.geo_corners or [],
+            slc.layer,
+            slc.extent,
+            "temp_kpa",
             overlay_size,
             canvas,
         )
@@ -865,9 +1335,56 @@ class LensMapTool(QgsMapToolPan):
             "range_spectrum": RangeSpectrumRenderMode(),
             "azimuth_viewer": AzimuthViewerRenderMode(),
             "range_viewer": RangeViewerRenderMode(),
+            "kpa": KPAFocusRenderMode(),
         }
         self._render_modes = set(self._modes.keys())
         self._active_mode: RenderMode = self._modes[self._render_mode]
+        self._kpa_controls = KPAControlsPanel(self.canvas)
+        self._kpa_controls.hide()
+        self._kpa_controls.linear_slider.valueChanged.connect(self._on_kpa_linear_changed)
+        self._kpa_controls.quadratic_slider.valueChanged.connect(
+            self._on_kpa_quadratic_changed
+        )
+        self._overlay_pos = QPoint(0, 0)
+
+    @property
+    def kpa_controls(self) -> KPAControlsPanel:
+        """KPA slider panel (parented to the map canvas)."""
+        return self._kpa_controls
+
+    def _kpa_mode(self) -> KPAFocusRenderMode:
+        mode = self._modes["kpa"]
+        assert isinstance(mode, KPAFocusRenderMode)
+        return mode
+
+    def _on_kpa_linear_changed(self, value: int) -> None:
+        self._kpa_mode().set_coefficients(a1=value / 5.0)
+        if self._render_mode == "kpa":
+            self._schedule_render()
+
+    def _on_kpa_quadratic_changed(self, value: int) -> None:
+        self._kpa_mode().set_coefficients(a2=value / 5.0)
+        if self._render_mode == "kpa":
+            self._schedule_render()
+
+    def _update_kpa_controls_visibility(self) -> None:
+        show = self._render_mode == "kpa" and self._overlay is not None
+        self._kpa_controls.setVisible(show)
+        if show:
+            self._kpa_controls.raise_()
+            self._update_kpa_controls_position(self._overlay_pos.x(), self._overlay_pos.y())
+
+    def _update_kpa_controls_position(self, overlay_x: int, overlay_y: int) -> None:
+        if not self._kpa_controls.isVisible():
+            return
+        canvas_size = self.canvas.size()
+        panel_w = self._kpa_controls.width()
+        panel_h = self._kpa_controls.height()
+        x = max(0, min(overlay_x, canvas_size.width() - panel_w))
+        y = overlay_y + self.overlay_size + 4
+        if y + panel_h > canvas_size.height():
+            y = max(0, overlay_y - panel_h - 4)
+        self._kpa_controls.move(x, y)
 
     @staticmethod
     def _coerce_raster_layer(layer: QgsMapLayer | None) -> QgsRasterLayer | None:
@@ -898,6 +1415,7 @@ class LensMapTool(QgsMapToolPan):
         self._overlay.show()
         if self._extent_band is not None:
             self._extent_band.show()
+        self._update_kpa_controls_visibility()
         self.canvas.setCursor(Qt.CrossCursor)
 
         self._shortcut_scroll_fwd = QShortcut(QKeySequence("Shift+Up"), self.canvas)
@@ -928,6 +1446,8 @@ class LensMapTool(QgsMapToolPan):
             self._extent_band.reset(QgsWkbTypes.PolygonGeometry)
             self._extent_band.hide()
             self._extent_band = None
+
+        self._kpa_controls.hide()
 
         self._pinned = False
         self._pinned_pos = None
@@ -1112,7 +1632,9 @@ class LensMapTool(QgsMapToolPan):
             x = max(0, min(x, canvas_size.width() - self.overlay_size))
             y = max(0, min(y, canvas_size.height() - self.overlay_size))
 
+        self._overlay_pos = QPoint(x, y)
         self._overlay.setPos(QPointF(x, y))
+        self._update_kpa_controls_position(x, y)
 
     def _map_point_from_pos(self, pos: QPoint | None):
         if pos is None:
@@ -1142,12 +1664,14 @@ class LensMapTool(QgsMapToolPan):
         if mode not in self._render_modes:
             mode = "normal"
         if mode == self._render_mode:
+            self._update_kpa_controls_visibility()
             return
         new_mode = self._modes.get(mode, self._modes["normal"])
         self._active_mode.on_deactivated()
         self._render_mode = mode
         self._active_mode = new_mode
         self._active_mode.on_activated()
+        self._update_kpa_controls_visibility()
         self._schedule_render()
 
     def render_mode(self) -> str:
@@ -1157,11 +1681,6 @@ class LensMapTool(QgsMapToolPan):
     def active_mode_uses_slc(self) -> bool:
         """Return True if the active render mode reads SLC patch data."""
         return self._render_mode in _SLC_RENDER_MODES
-
-
-def _tr(message: str) -> str:
-    """Translate message for ICEYE Toolbox context."""
-    return QCoreApplication.translate("ICEYE Toolbox", message)
 
 
 class LensToolbarAction:
@@ -1212,6 +1731,18 @@ class LensToolbarAction:
         normal_action.triggered.connect(lambda: self._set_lens_render_mode("normal"))
         self.lens_toolbar.addAction(normal_action)
         self.lens_render_actions["normal"] = normal_action
+
+        kpa_action = QAction(
+            QIcon(
+                ":/plugins/iceye_toolbox/focus-horizontal-round-round-840-svgrepo-com.svg"
+            ),
+            _tr("Lens Render: KPA focus"),
+            self.iface.mainWindow(),
+        )
+        kpa_action.setStatusTip("Lens render mode: KPA Focus")
+        kpa_action.triggered.connect(lambda: self._set_lens_render_mode("kpa"))
+        self.lens_toolbar.addAction(kpa_action)
+        self.lens_render_actions["kpa"] = kpa_action
 
         spectrum_action = QAction(
             QIcon(
@@ -1325,6 +1856,7 @@ class LensToolbarAction:
         spectrum_action.setCheckable(True)
         spectrum_2d_action.setCheckable(True)
         color_action.setCheckable(True)
+        kpa_action.setCheckable(True)
 
         self.lens_render_mode_group = QActionGroup(self.iface.mainWindow())
         self.lens_render_mode_group.setExclusive(True)
@@ -1337,6 +1869,7 @@ class LensToolbarAction:
             action.setEnabled(False)
         self._spectrum_dropdown_btn.setEnabled(False)
         self._viewer_dropdown_btn.setEnabled(False)
+        self.lens_tool.kpa_controls.setEnabled(False)
 
         if self._toolbar_button_policy is not None:
             self._toolbar_button_policy.register(
@@ -1356,6 +1889,7 @@ class LensToolbarAction:
                 "color",
                 "azimuth_viewer",
                 "range_viewer",
+                "kpa",
             ):
                 self._toolbar_button_policy.register(
                     self.lens_render_actions[key],
@@ -1369,6 +1903,11 @@ class LensToolbarAction:
             )
             self._toolbar_button_policy.register(
                 self._viewer_dropdown_btn,
+                self._policy_lens_slc,
+                on_disable=self._on_slc_lens_policy_disabled,
+            )
+            self._toolbar_button_policy.register(
+                self.lens_tool.kpa_controls,
                 self._policy_lens_slc,
                 on_disable=self._on_slc_lens_policy_disabled,
             )
@@ -1454,6 +1993,7 @@ class LensToolbarAction:
                     action.setEnabled(True)
                 self._spectrum_dropdown_btn.setEnabled(True)
                 self._viewer_dropdown_btn.setEnabled(True)
+                self.lens_tool.kpa_controls.setEnabled(True)
             self._set_lens_render_mode("normal")
             return
 
@@ -1462,6 +2002,7 @@ class LensToolbarAction:
                 action.setEnabled(False)
             self._spectrum_dropdown_btn.setEnabled(False)
             self._viewer_dropdown_btn.setEnabled(False)
+            self.lens_tool.kpa_controls.setEnabled(False)
         else:
             self._toolbar_button_policy.refresh()
 
@@ -1485,6 +2026,7 @@ class LensToolbarAction:
             action.setEnabled(False)
         self._spectrum_dropdown_btn.setEnabled(False)
         self._viewer_dropdown_btn.setEnabled(False)
+        self.lens_tool.kpa_controls.setEnabled(False)
 
         if self._toolbar_button_policy is not None:
             self._toolbar_button_policy.refresh()
