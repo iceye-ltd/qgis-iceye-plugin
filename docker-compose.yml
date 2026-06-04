@@ -1,11 +1,12 @@
-version: '3'
 services:
   qgis:
     build:
       context: .
       dockerfile: ./Dockerfile
       args:
-        QGIS_VERSION: ${QGIS_VERSION}
+        QGIS_VERSION: ${QGIS_VERSION:-3.44}
+    # Separate tag per QGIS_VERSION so 3.44 and 4.0-trixie do not share one cached image
+    image: iceye-qgis-test:${QGIS_VERSION:-3.44}
     tty: true
     working_dir: /usr/src/iceye_toolbox
     volumes:

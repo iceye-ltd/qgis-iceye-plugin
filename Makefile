@@ -13,13 +13,19 @@ WORKSPACE ?= $(shell pwd)
 
 help:
 	@echo "Targets:"
-	@echo "  make test           Run pytest locally (PLUGIN_PARENT auto-set; needs QGIS Python)"
+	@echo "  make test [QGIS_VERSION=3.44]   Run pytest in Docker (rebuilds image for that version)"
+	@echo "  make docker-build [QGIS_VERSION=...]  Build test image only"
 	@echo "  make package VERSION=<tag|commit>   $(PLUGINNAME).zip via git archive (export-ignore in .gitattributes strips dev-only files)"
 	@echo "  make install [INSTALL_OS=<os>]   Symlink repo into user QGIS plugins dir"
 	@echo "  make uninstall [INSTALL_OS=<os>]   Remove that symlink (INSTALL_OS must match the install)"
+	@echo ""
+	@echo "QGIS 4: use a distribution tag, e.g. 4.0-trixie or 4.0-questing (not bare 4.0)."
+
+docker-build:
+	QGIS_VERSION=$(QGIS_VERSION) WORKSPACE=$(WORKSPACE) docker compose -f docker-compose.yml build --pull qgis
 
 test:
-	QGIS_VERSION=$(QGIS_VERSION) WORKSPACE=$(WORKSPACE) docker compose -f docker-compose.yml run qgis /usr/src/iceye_toolbox/test.sh
+	QGIS_VERSION=$(QGIS_VERSION) WORKSPACE=$(WORKSPACE) docker compose -f docker-compose.yml run --rm --build --remove-orphans qgis /usr/src/iceye_toolbox/test.sh
 
 package:
 	@test -n "$(VERSION)" || (echo "Set VERSION, e.g. make package VERSION=v1.0.0" && false)
