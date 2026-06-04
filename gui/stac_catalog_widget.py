@@ -24,7 +24,7 @@ from qgis.core import (
     QgsVectorLayer,
 )
 from qgis.PyQt import uic
-from qgis.PyQt.QtCore import QByteArray, QStandardPaths, Qt, QVariant
+from qgis.PyQt.QtCore import QByteArray, QMetaType, QStandardPaths, Qt
 from qgis.PyQt.QtGui import QColor
 from qgis.PyQt.QtWidgets import QAbstractItemView, QTreeWidgetItem
 
@@ -673,9 +673,9 @@ class StacCatalogWidget(BASE, WIDGET):
         self._apply_layer_style(layer)
 
         fields = QgsFields()
-        fields.append(QgsField("id", QVariant.String))
-        fields.append(QgsField("collection", QVariant.String))
-        fields.append(QgsField("datetime", QVariant.String))
+        fields.append(QgsField("id", QMetaType.Type.QString))
+        fields.append(QgsField("collection", QMetaType.Type.QString))
+        fields.append(QgsField("datetime", QMetaType.Type.QString))
         layer.dataProvider().addAttributes(fields)
         layer.updateFields()
 

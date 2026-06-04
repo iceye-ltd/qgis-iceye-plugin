@@ -948,7 +948,7 @@ class LensMapTool(QgsMapToolPan):
         if self._pinned:
             return
         self._last_map_point = event.mapPoint()
-        self._last_pos = event.pos()
+        self._last_pos = event.pixelPoint()
         self._recompute_extent()
         self._update_position(self._last_pos)
         self._update_extent_band()
@@ -956,7 +956,7 @@ class LensMapTool(QgsMapToolPan):
 
     def canvasPressEvent(self, event):
         """Handle canvas mouse press."""
-        self._press_pos = event.pos()
+        self._press_pos = event.pixelPoint()
         super().canvasPressEvent(event)
 
     def canvasReleaseEvent(self, event):
@@ -964,7 +964,7 @@ class LensMapTool(QgsMapToolPan):
         super().canvasReleaseEvent(event)
         if event.button() != Qt.MouseButton.LeftButton or self._press_pos is None:
             return
-        moved = (event.pos() - self._press_pos).manhattanLength()
+        moved = (event.pixelPoint() - self._press_pos).manhattanLength()
         self._press_pos = None
         if moved > 3:
             return
@@ -973,7 +973,7 @@ class LensMapTool(QgsMapToolPan):
             self._pinned_pos = None
             self._pinned_map_point = None
             self._last_map_point = event.mapPoint()
-            self._last_pos = event.pos()
+            self._last_pos = event.pixelPoint()
             self._recompute_extent()
             self._update_position(self._last_pos)
             self._update_extent_band()

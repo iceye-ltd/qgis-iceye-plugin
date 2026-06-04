@@ -158,7 +158,10 @@ class SARItemPlacementTool(QgsMapTool):
             if hit is not None:
                 menu = QMenu(self.canvas())
                 remove_action = menu.addAction(_tr(self._remove_label))
-                if menu.exec(self.canvas().mapToGlobal(event.pos())) is remove_action:
+                if (
+                    menu.exec(self.canvas().mapToGlobal(_local_event_pos(event)))
+                    is remove_action
+                ):
                     self.removed.emit(hit)
             return
         if event.button() != Qt.MouseButton.LeftButton:
@@ -236,21 +239,21 @@ class BaseInteractionFilter(QObject):
 
     def _handle_press(self, event):
         if event.button() == Qt.MouseButton.LeftButton:
-            map_point = self._viewport_to_map(event.pos())
+            map_point = self._viewport_to_map(_local_event_pos(event))
             hit = self._hit_item(map_point)
             if hit is not None:
                 self._dragging = hit
                 return True
 
         elif event.button() == Qt.MouseButton.RightButton:
-            map_point = self._viewport_to_map(event.pos())
+            map_point = self._viewport_to_map(_local_event_pos(event))
             hit = self._hit_item(map_point)
             if hit is not None:
                 return True
         return False
 
     def _handle_move(self, event) -> bool:
-        map_point = self._viewport_to_map(event.pos())
+        map_point = self._viewport_to_map(_local_event_pos(event))
 
         hit = self._hit_item(map_point)
         if hit is not self._highlighted:
@@ -269,13 +272,15 @@ class BaseInteractionFilter(QObject):
 
     def _handle_release(self, event):
         if event.button() == Qt.MouseButton.RightButton:
-            map_point = self._viewport_to_map(event.pos())
+            map_point = self._viewport_to_map(_local_event_pos(event))
             hit = self._hit_item(map_point)
             if hit is not None:
                 menu = QMenu()
                 remove_action = menu.addAction(_tr(self._remove_label))
                 if (
-                    menu.exec(self._canvas.viewport().mapToGlobal(event.pos()))
+                    menu.exec(
+                        self._canvas.viewport().mapToGlobal(_local_event_pos(event))
+                    )
                     is remove_action
                 ):
                     self._on_removed(hit)
