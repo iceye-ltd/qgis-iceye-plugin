@@ -9,9 +9,6 @@ from functools import partial
 from pathlib import Path
 from typing import Any, Literal
 
-from PyQt5.QtCore import QSize, Qt
-from PyQt5.QtGui import QColor
-from PyQt5.QtWidgets import QFileDialog
 from qgis.core import (
     Qgis,
     QgsApplication,
@@ -24,6 +21,9 @@ from qgis.core import (
     QgsTask,
 )
 from qgis.gui import QgsMapCanvas
+from qgis.PyQt.QtCore import QSize, Qt
+from qgis.PyQt.QtGui import QColor
+from qgis.PyQt.QtWidgets import QDialog, QFileDialog
 
 from ..gui.export_dialog import ExportDialog
 
@@ -62,12 +62,15 @@ class ExportTool:
             iface.messageBar().pushMessage(
                 "Export",
                 f"Canvas exported successfully to {output_path}",
-                level=Qgis.Success,
+                level=Qgis.MessageLevel.Success,
                 duration=5,
             )
             return True
         iface.messageBar().pushMessage(
-            "Error", "Failed to save canvas image", level=Qgis.Critical, duration=5
+            "Error",
+            "Failed to save canvas image",
+            level=Qgis.MessageLevel.Critical,
+            duration=5,
         )
         return False
 
@@ -78,7 +81,9 @@ class ExportTool:
 
         if not isinstance(layer, QgsRasterLayer):
             QgsMessageLog.logMessage(
-                "Layer is not a raster layer", "ICEYE Toolbox", level=Qgis.Warning
+                "Layer is not a raster layer",
+                "ICEYE Toolbox",
+                level=Qgis.MessageLevel.Warning,
             )
             return False
 
@@ -103,13 +108,13 @@ class ExportTool:
             file_filter=file_filter,
         )
 
-        if dialog.exec_() != ExportDialog.Accepted:
+        if dialog.exec() != QDialog.DialogCode.Accepted:
             return False
 
         settings = dialog.get_export_settings()
         if not settings["output_path"]:
             QgsMessageLog.logMessage(
-                "Settings are missing", "ICEYE Toolbox", level=Qgis.Warning
+                "Settings are missing", "ICEYE Toolbox", level=Qgis.MessageLevel.Warning
             )
             return False
 
@@ -166,7 +171,7 @@ class ExportLayerAsPNG(QgsTask):
         output_path: str,
         downscale_factor: float = 1.0,
     ) -> None:
-        super().__init__(description, QgsTask.CanCancel)
+        super().__init__(description, QgsTask.Flag.CanCancel)
 
         self.layer = layer
         self.output_path: str = output_path
@@ -186,9 +191,9 @@ class ExportLayerAsPNG(QgsTask):
                 int(self.layer.height()),
             )
         )
-        ms.setFlag(QgsMapSettings.UseRenderingOptimization, True)
-        ms.setFlag(QgsMapSettings.Antialiasing, True)
-        ms.setFlag(QgsMapSettings.HighQualityImageTransforms, True)
+        ms.setFlag(QgsMapSettings.Flag.UseRenderingOptimization, True)
+        ms.setFlag(QgsMapSettings.Flag.Antialiasing, True)
+        ms.setFlag(QgsMapSettings.Flag.HighQualityImageTransforms, True)
         ms.setBackgroundColor(QColor(0, 0, 0, 0))  # RGBA with alpha=0 for transparency
 
         job = QgsMapRendererParallelJob(ms)
@@ -213,7 +218,7 @@ class ExportLayerAsPNG(QgsTask):
             QgsMessageLog.logMessage(
                 f"Layer exported to {self.output_path}",
                 "ICEYE Toolbox",
-                level=Qgis.Success,
+                level=Qgis.MessageLevel.Success,
             )
 
 
@@ -226,7 +231,7 @@ class ExportLayerAsCOG(QgsTask):
         layer: QgsRasterLayer,
         output_path: str,
     ) -> None:
-        super().__init__(description, QgsTask.CanCancel)
+        super().__init__(description, QgsTask.Flag.CanCancel)
         self.layer = layer
         self.output_path: Path = Path(output_path)
 
@@ -241,7 +246,7 @@ class ExportLayerAsCOG(QgsTask):
             QgsMessageLog.logMessage(
                 f"Layer exported to {self.output_path}",
                 "ICEYE Toolbox",
-                level=Qgis.Success,
+                level=Qgis.MessageLevel.Success,
             )
 
 
@@ -258,7 +263,7 @@ class ExportMultiBandLayer(QgsTask):
         frame_duration_ms: float = GIF_DURATION,
         fps: float | None = None,
     ) -> None:
-        super().__init__(description, QgsTask.CanCancel)
+        super().__init__(description, QgsTask.Flag.CanCancel)
 
         self.layer = layer
         self.output_path: str = output_path
@@ -282,7 +287,7 @@ class ExportMultiBandLayer(QgsTask):
         QgsMessageLog.logMessage(
             f"Starting {format_name} export: {total_frames} frames to {self.output_path}",
             "ICEYE Toolbox",
-            level=Qgis.Info,
+            level=Qgis.MessageLevel.Info,
         )
 
         width = int(self.layer.width() * self.downscale_factor)
@@ -291,7 +296,7 @@ class ExportMultiBandLayer(QgsTask):
         QgsMessageLog.logMessage(
             f"Export dimensions: {width}x{height} ({int(self.downscale_factor * 100)}% scale), bands: {total_frames}",
             "ICEYE Toolbox",
-            level=Qgis.Info,
+            level=Qgis.MessageLevel.Info,
         )
 
         temp_dir = Path(tempfile.gettempdir()) / "qgis"
@@ -306,14 +311,16 @@ class ExportMultiBandLayer(QgsTask):
             scaled = img.scaled(img.size() * downscaling_factor)
             if not scaled.save(str(path), "PNG", 100):
                 QgsMessageLog.logMessage(
-                    f"failed to save {path}", "ICEYE Toolbox", Qgis.Warning
+                    f"failed to save {path}", "ICEYE Toolbox", Qgis.MessageLevel.Warning
                 )
 
         # Generate PNG frames for each band
         for band in range(1, total_frames + 1):
             if self.isCanceled():
                 QgsMessageLog.logMessage(
-                    f"{format_name} export cancelled", "ICEYE Toolbox", Qgis.Warning
+                    f"{format_name} export cancelled",
+                    "ICEYE Toolbox",
+                    Qgis.MessageLevel.Warning,
                 )
                 return False
 
@@ -337,7 +344,7 @@ class ExportMultiBandLayer(QgsTask):
                     int(self.layer.height()),
                 )
             )
-            ms.setFlag(QgsMapSettings.UseRenderingOptimization, True)
+            ms.setFlag(QgsMapSettings.Flag.UseRenderingOptimization, True)
             ms.setBackgroundColor(QColor(0, 0, 0, 0))
 
             frame_path = temp_dir / f"{frame_prefix}_{band}.png"
@@ -356,7 +363,7 @@ class ExportMultiBandLayer(QgsTask):
                 QgsMessageLog.logMessage(
                     "No frame files were generated",
                     "ICEYE Toolbox",
-                    Qgis.Critical,
+                    Qgis.MessageLevel.Critical,
                 )
                 return False
 
@@ -370,7 +377,7 @@ class ExportMultiBandLayer(QgsTask):
             QgsMessageLog.logMessage(
                 f"{tool} not found. Please install {tool} for {format_name} export.",
                 "ICEYE Toolbox",
-                Qgis.Critical,
+                Qgis.MessageLevel.Critical,
             )
             return False
         finally:
@@ -382,7 +389,7 @@ class ExportMultiBandLayer(QgsTask):
                     QgsMessageLog.logMessage(
                         f"Failed to remove temporary file {frame_path}: {str(e)}",
                         "ICEYE Toolbox",
-                        Qgis.Warning,
+                        Qgis.MessageLevel.Warning,
                     )
 
         return success
@@ -391,7 +398,7 @@ class ExportMultiBandLayer(QgsTask):
         QgsMessageLog.logMessage(
             f"Creating GIF from {len(frame_paths)} frames using ImageMagick",
             "ICEYE Toolbox",
-            Qgis.Info,
+            Qgis.MessageLevel.Info,
         )
 
         for frame_path in frame_paths:
@@ -399,7 +406,7 @@ class ExportMultiBandLayer(QgsTask):
                 QgsMessageLog.logMessage(
                     "GIF export cancelled during frame processing",
                     "ICEYE Toolbox",
-                    Qgis.Warning,
+                    Qgis.MessageLevel.Warning,
                 )
                 return False
 
@@ -416,14 +423,14 @@ class ExportMultiBandLayer(QgsTask):
             QgsMessageLog.logMessage(
                 f"GIF export completed: {self.output_path}",
                 "ICEYE Toolbox",
-                Qgis.Info,
+                Qgis.MessageLevel.Info,
             )
             return True
         else:
             QgsMessageLog.logMessage(
                 f"ImageMagick convert failed: {result.stderr}",
                 "ICEYE Toolbox",
-                Qgis.Critical,
+                Qgis.MessageLevel.Critical,
             )
             return False
 
@@ -433,7 +440,7 @@ class ExportMultiBandLayer(QgsTask):
         QgsMessageLog.logMessage(
             f"Converting {len(frame_paths)} frames to MP4 using ffmpeg",
             "ICEYE Toolbox",
-            Qgis.Info,
+            Qgis.MessageLevel.Info,
         )
 
         # ffmpeg image2 demuxer: -i multiband_frame_%d.png reads mp4_frame_1.png, mp4_frame_2.png, ...
@@ -460,14 +467,14 @@ class ExportMultiBandLayer(QgsTask):
             QgsMessageLog.logMessage(
                 f"MP4 export completed: {self.output_path}",
                 "ICEYE Toolbox",
-                Qgis.Info,
+                Qgis.MessageLevel.Info,
             )
             return True
         else:
             QgsMessageLog.logMessage(
                 f"ffmpeg failed: {result.stderr}",
                 "ICEYE Toolbox",
-                Qgis.Critical,
+                Qgis.MessageLevel.Critical,
             )
             return False
 
@@ -477,5 +484,5 @@ class ExportMultiBandLayer(QgsTask):
             QgsMessageLog.logMessage(
                 f"Layer exported to {self.output_path}",
                 "ICEYE Toolbox",
-                level=Qgis.Success,
+                level=Qgis.MessageLevel.Success,
             )

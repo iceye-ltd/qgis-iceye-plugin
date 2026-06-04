@@ -46,7 +46,7 @@ class VideoProcessingTask(QgsTask):
         metadata,
         temp_files,
     ):
-        super().__init__("Processing Video", QgsTask.CanCancel)
+        super().__init__("Processing Video", QgsTask.Flag.CanCancel)
 
         # Store parameters
         self.iface = iface
@@ -96,7 +96,7 @@ class VideoProcessingTask(QgsTask):
             QgsMessageLog.logMessage(
                 "Cropping complete, starting frame generation...",
                 "ICEYE Toolbox",
-                Qgis.Info,
+                Qgis.MessageLevel.Info,
             )
 
             # Store for temporal properties in finished()
@@ -112,7 +112,7 @@ class VideoProcessingTask(QgsTask):
             QgsMessageLog.logMessage(
                 f"Cropped layers approximate imaging time: {frame_time:.3f} seconds",
                 "ICEYE Toolbox",
-                Qgis.Info,
+                Qgis.MessageLevel.Info,
             )
 
             # Read cropped layer and reconstruct complex data
@@ -131,13 +131,13 @@ class VideoProcessingTask(QgsTask):
             QgsMessageLog.logMessage(
                 f"current progress {self.progress()}",
                 "ICEYE Toolbox",
-                Qgis.Info,
+                Qgis.MessageLevel.Info,
             )
             self.setProgress(10)
             QgsMessageLog.logMessage(
                 f"current progress {self.progress()}",
                 "ICEYE Toolbox",
-                Qgis.Info,
+                Qgis.MessageLevel.Info,
             )
             self.layer_name = cropped_layer.name().replace("_CROP_", "_SHORT_")
 
@@ -163,7 +163,7 @@ class VideoProcessingTask(QgsTask):
             QgsMessageLog.logMessage(
                 f"current progress {self.progress()}",
                 "ICEYE Toolbox",
-                Qgis.Info,
+                Qgis.MessageLevel.Info,
             )
             # Generate frames and write them directly to TIFF
             try:
@@ -184,14 +184,14 @@ class VideoProcessingTask(QgsTask):
                         QgsMessageLog.logMessage(
                             f"Metadata copied to video layer {self.temp_path}",
                             "ICEYE Toolbox",
-                            Qgis.Info,
+                            Qgis.MessageLevel.Info,
                         )
                         src_ds = None
                 except (KeyError, TypeError) as e:
                     QgsMessageLog.logMessage(
                         f"Failed to copy metadata to video layer: {e!s}",
                         "ICEYE Toolbox",
-                        Qgis.Warning,
+                        Qgis.MessageLevel.Warning,
                     )
 
                 # Always close the raster
@@ -219,7 +219,7 @@ class VideoProcessingTask(QgsTask):
                 QgsMessageLog.logMessage(
                     f"Failed to build video layer overviews: {e!s}",
                     "ICEYE Toolbox",
-                    Qgis.Warning,
+                    Qgis.MessageLevel.Warning,
                 )
                 return False
 
@@ -229,7 +229,9 @@ class VideoProcessingTask(QgsTask):
         except Exception as e:
             self.exception = e
             QgsMessageLog.logMessage(
-                f"Video processing error: {e!s}", "ICEYE Toolbox", Qgis.Critical
+                f"Video processing error: {e!s}",
+                "ICEYE Toolbox",
+                Qgis.MessageLevel.Critical,
             )
             return False
 
@@ -240,11 +242,13 @@ class VideoProcessingTask(QgsTask):
                 QgsMessageLog.logMessage(
                     f"Video processing failed: {self.exception!s}",
                     "ICEYE Toolbox",
-                    Qgis.Critical,
+                    Qgis.MessageLevel.Critical,
                 )
             elif self.isCanceled():
                 QgsMessageLog.logMessage(
-                    "Video processing was cancelled", "ICEYE Toolbox", Qgis.Warning
+                    "Video processing was cancelled",
+                    "ICEYE Toolbox",
+                    Qgis.MessageLevel.Warning,
                 )
         else:
             try:
@@ -268,11 +272,13 @@ class VideoProcessingTask(QgsTask):
                 QgsMessageLog.logMessage(
                     f"Video created successfully with {self.num_frames} frames!",
                     "ICEYE Toolbox",
-                    Qgis.Info,
+                    Qgis.MessageLevel.Info,
                 )
             except Exception as e:
                 QgsMessageLog.logMessage(
-                    f"Failed to load video layer: {e!s}", "ICEYE Toolbox", Qgis.Critical
+                    f"Failed to load video layer: {e!s}",
+                    "ICEYE Toolbox",
+                    Qgis.MessageLevel.Critical,
                 )
 
 
@@ -314,8 +320,8 @@ class VideoTool:
             return False
         try:
             return self.video_task.status() not in (
-                QgsTask.Complete,
-                QgsTask.Terminated,
+                QgsTask.TaskStatus.Complete,
+                QgsTask.TaskStatus.Terminated,
             )
         except RuntimeError:
             self.video_task = None
@@ -327,7 +333,7 @@ class VideoTool:
             self.iface.messageBar().pushMessage(
                 "ICEYE Toolbox",
                 "No extents to process.",
-                level=Qgis.Warning,
+                level=Qgis.MessageLevel.Warning,
                 duration=3,
             )
             return
@@ -335,7 +341,7 @@ class VideoTool:
             self.iface.messageBar().pushMessage(
                 "ICEYE Toolbox",
                 "Batch video is already running.",
-                level=Qgis.Warning,
+                level=Qgis.MessageLevel.Warning,
                 duration=4,
             )
             return
@@ -343,7 +349,7 @@ class VideoTool:
             self.iface.messageBar().pushMessage(
                 "ICEYE Toolbox",
                 "A video task is already running.",
-                level=Qgis.Warning,
+                level=Qgis.MessageLevel.Warning,
                 duration=4,
             )
             return
@@ -353,7 +359,7 @@ class VideoTool:
             self.iface.messageBar().pushMessage(
                 "ICEYE Toolbox",
                 "Could not resolve source layer for batch video.",
-                level=Qgis.Critical,
+                level=Qgis.MessageLevel.Critical,
                 duration=5,
             )
             return
@@ -363,13 +369,13 @@ class VideoTool:
             self.iface.messageBar().pushMessage(
                 "ICEYE Toolbox",
                 "No metadata found for batch video.",
-                level=Qgis.Critical,
+                level=Qgis.MessageLevel.Critical,
                 duration=5,
             )
             return
 
         dialog = VideoDialog(self.iface.mainWindow())
-        if not dialog.exec_():
+        if not dialog.exec():
             return
 
         self._batch_num_frames = dialog.get_num_frames()
@@ -378,12 +384,12 @@ class VideoTool:
         QgsMessageLog.logMessage(
             f"Batch video: starting {n} extent(s)",
             "ICEYE Toolbox",
-            Qgis.Info,
+            Qgis.MessageLevel.Info,
         )
         self.iface.messageBar().pushMessage(
             "ICEYE Toolbox",
             f"Batch video: {n} area(s), {self._batch_num_frames} frame(s) each…",
-            level=Qgis.Info,
+            level=Qgis.MessageLevel.Info,
             duration=5,
         )
         self._batch_runner.run_next_after_prepare(
@@ -405,7 +411,7 @@ class VideoTool:
             QgsMessageLog.logMessage(
                 f"Batch video: no metadata for step {index}/{total}",
                 "ICEYE Toolbox",
-                Qgis.Warning,
+                Qgis.MessageLevel.Warning,
             )
             return BatchStepResult(skip=True)
 
@@ -421,7 +427,7 @@ class VideoTool:
         self.video_task.addSubTask(
             crop_task,
             [],
-            QgsTask.ParentDependsOnSubTask,
+            QgsTask.SubTaskDependency.ParentDependsOnSubTask,
         )
         return BatchStepResult(task=self.video_task)
 
@@ -429,7 +435,7 @@ class VideoTool:
         QgsMessageLog.logMessage(
             f"Batch video: completed step {self._batch_runner.step_index}/{self._batch_runner.total}",
             "ICEYE Toolbox",
-            Qgis.Info,
+            Qgis.MessageLevel.Info,
         )
 
     def _finalize_video_batch(self) -> None:
@@ -439,7 +445,8 @@ class VideoTool:
         """Activate extent tool for selecting area for video creation."""
         self.canvas.setMapTool(self.extent_tool)
         self.iface.messageBar().pushMessage(
-            "Click and drag to select area for video creation", level=Qgis.Info
+            "Click and drag to select area for video creation",
+            level=Qgis.MessageLevel.Info,
         )
 
     def _create_video(self, extent):
@@ -453,7 +460,7 @@ class VideoTool:
 
         if not tif_layer:
             self.iface.messageBar().pushMessage(
-                "No TIF layer found", level=Qgis.Critical
+                "No TIF layer found", level=Qgis.MessageLevel.Critical
             )
             return
 
@@ -461,14 +468,14 @@ class VideoTool:
         metadata = self.metadata_provider.get(tif_layer)
         if not metadata:
             self.iface.messageBar().pushMessage(
-                "No metadata found", level=Qgis.Critical
+                "No metadata found", level=Qgis.MessageLevel.Critical
             )
             return
 
         # Show dialog for settings
         dialog = VideoDialog(self.iface.mainWindow())
 
-        if not dialog.exec_():
+        if not dialog.exec():
             return
 
         num_frames = dialog.get_num_frames()
@@ -491,7 +498,7 @@ class VideoTool:
         self.video_task.addSubTask(
             crop_task,
             [],
-            QgsTask.ParentDependsOnSubTask,
+            QgsTask.SubTaskDependency.ParentDependsOnSubTask,
         )
 
         # Now add the parent task to task manager
@@ -499,7 +506,7 @@ class VideoTool:
 
         self.iface.messageBar().pushMessage(
             f"Starting video processing with {num_frames} frames in background...",
-            level=Qgis.Info,
+            level=Qgis.MessageLevel.Info,
         )
 
 
@@ -580,15 +587,15 @@ def get_frames_slow_time(
     QgsMessageLog.logMessage(
         f"Frame resolution: {frame_resolution:.3f} meters, of size {segment_size}/{num_valid_samples}",
         "ICEYE Toolbox",
-        Qgis.Info,
+        Qgis.MessageLevel.Info,
     )
 
-    QgsMessageLog.logMessage("FFTing...", "ICEYE Toolbox", Qgis.Info)
+    QgsMessageLog.logMessage("FFTing...", "ICEYE Toolbox", Qgis.MessageLevel.Info)
     # rest 60 %
     for i, center in enumerate(centers):
         if is_canceled():
             QgsMessageLog.logMessage(
-                "Frame generation cancelled", "ICEYE Toolbox", Qgis.Warning
+                "Frame generation cancelled", "ICEYE Toolbox", Qgis.MessageLevel.Warning
             )
             return
 
@@ -600,7 +607,7 @@ def get_frames_slow_time(
         start_idx = int(center - segment_size // 2)
         end_idx = int(start_idx + segment_size)
         QgsMessageLog.logMessage(
-            f"from {start_idx} to {end_idx}", "ICEYE Toolbox", Qgis.Info
+            f"from {start_idx} to {end_idx}", "ICEYE Toolbox", Qgis.MessageLevel.Info
         )
         frame_spectrum[start_idx:end_idx, :] = fft_data[start_idx:end_idx, :]
         frame_spectrum = np.fft.ifftshift(frame_spectrum, axes=0)
@@ -666,7 +673,9 @@ def create_multiband_raster(
 
     if output_raster is None:
         QgsMessageLog.logMessage(
-            f"Failed to create raster file: {path}", "iceye_toolbox", Qgis.Critical
+            f"Failed to create raster file: {path}",
+            "iceye_toolbox",
+            Qgis.MessageLevel.Critical,
         )
         return None
 
@@ -683,7 +692,7 @@ def create_multiband_raster(
             QgsMessageLog.logMessage(
                 f"Failed to open source path: {source_path}",
                 "iceye_toolbox",
-                Qgis.Critical,
+                Qgis.MessageLevel.Critical,
             )
             return None
 
@@ -709,6 +718,6 @@ def write_frame_to_band(
         QgsMessageLog.logMessage(
             f"Failed to write frame to band {band_index}: {e!s}",
             "iceye_toolbox",
-            Qgis.Critical,
+            Qgis.MessageLevel.Critical,
         )
         return False

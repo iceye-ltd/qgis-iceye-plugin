@@ -90,7 +90,7 @@ class BatchExtentRunner:
             self.iface.messageBar().pushMessage(
                 "ICEYE Toolbox",
                 "No extents to process.",
-                level=Qgis.Warning,
+                level=Qgis.MessageLevel.Warning,
                 duration=3,
             )
             return False
@@ -98,7 +98,7 @@ class BatchExtentRunner:
             self.iface.messageBar().pushMessage(
                 "ICEYE Toolbox",
                 self._batch_already_running_msg,
-                level=Qgis.Warning,
+                level=Qgis.MessageLevel.Warning,
                 duration=4,
             )
             return False
@@ -106,7 +106,7 @@ class BatchExtentRunner:
             self.iface.messageBar().pushMessage(
                 "ICEYE Toolbox",
                 self._sibling_task_running_msg,
-                level=Qgis.Warning,
+                level=Qgis.MessageLevel.Warning,
                 duration=4,
             )
             return False
@@ -141,12 +141,12 @@ class BatchExtentRunner:
         if not self.try_begin_batch(jobs):
             return False
         if start_log:
-            QgsMessageLog.logMessage(start_log, "ICEYE Toolbox", Qgis.Info)
+            QgsMessageLog.logMessage(start_log, "ICEYE Toolbox", Qgis.MessageLevel.Info)
         if start_message:
             self.iface.messageBar().pushMessage(
                 "ICEYE Toolbox",
                 start_message,
-                level=Qgis.Info,
+                level=Qgis.MessageLevel.Info,
                 duration=start_message_duration,
             )
         self._on_step = on_step
@@ -242,12 +242,12 @@ class BatchExtentRunner:
             f"{self._label}: source layer {layer_id!r} missing or invalid; "
             f"skipping step {self._index}/{self._total}",
             "ICEYE Toolbox",
-            Qgis.Warning,
+            Qgis.MessageLevel.Warning,
         )
         self.iface.messageBar().pushMessage(
             "ICEYE Toolbox",
             f"Skipped step {self._index}: source layer no longer in the project.",
-            level=Qgis.Warning,
+            level=Qgis.MessageLevel.Warning,
             duration=5,
         )
 
@@ -263,13 +263,13 @@ class BatchExtentRunner:
         self.iface.messageBar().pushMessage(
             "ICEYE Toolbox",
             f"{self._label} finished ({n} area(s)).",
-            level=Qgis.Info,
+            level=Qgis.MessageLevel.Info,
             duration=5,
         )
         QgsMessageLog.logMessage(
             f"{self._label}: queue empty, batch finished",
             "ICEYE Toolbox",
-            Qgis.Info,
+            Qgis.MessageLevel.Info,
         )
 
     def _cleanup_state(self) -> None:

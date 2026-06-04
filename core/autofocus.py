@@ -79,7 +79,10 @@ class AutofocusTool:
         if self.task is None:
             return False
         try:
-            return self.task.status() not in (QgsTask.Complete, QgsTask.Terminated)
+            return self.task.status() not in (
+                QgsTask.TaskStatus.Complete,
+                QgsTask.TaskStatus.Terminated,
+            )
         except RuntimeError:
             # Qt has destroyed the underlying QgsTask; clear stale Python wrapper.
             self.task = None
@@ -106,12 +109,12 @@ class AutofocusTool:
         QgsMessageLog.logMessage(
             f"Mask layer created: {mask.name()}",
             "ICEYE Toolbox",
-            Qgis.Info,
+            Qgis.MessageLevel.Info,
         )
 
         crop_task = CropLayerTask(layer, extent)
         task = AutofocusTask(self.iface, self.metadata_provider, crop_task)
-        task.addSubTask(crop_task, [], QgsTask.ParentDependsOnSubTask)
+        task.addSubTask(crop_task, [], QgsTask.SubTaskDependency.ParentDependsOnSubTask)
         return task, mask
 
     def process_extent(self, extent: QgsRectangle) -> None:
@@ -120,7 +123,7 @@ class AutofocusTool:
             self.iface.messageBar().pushMessage(
                 "ICEYE Toolbox",
                 "Batch focus is running — wait for it to finish.",
-                level=Qgis.Warning,
+                level=Qgis.MessageLevel.Warning,
                 duration=4,
             )
             return
@@ -128,7 +131,7 @@ class AutofocusTool:
             self.iface.messageBar().pushMessage(
                 "ICEYE Toolbox",
                 "A focus task is already running.",
-                level=Qgis.Warning,
+                level=Qgis.MessageLevel.Warning,
                 duration=4,
             )
             return
@@ -138,11 +141,13 @@ class AutofocusTool:
             active = self.iface.activeLayer()
             if not isinstance(active, QgsRasterLayer):
                 self.iface.messageBar().pushMessage(
-                    "No TIF layer found", level=Qgis.Warning, duration=3
+                    "No TIF layer found", level=Qgis.MessageLevel.Warning, duration=3
                 )
             else:
                 self.iface.messageBar().pushMessage(
-                    "Failed to create mask layer", level=Qgis.Warning, duration=3
+                    "Failed to create mask layer",
+                    level=Qgis.MessageLevel.Warning,
+                    duration=3,
                 )
             return
 
@@ -189,12 +194,12 @@ class AutofocusTool:
             QgsMessageLog.logMessage(
                 f"Batch focus: step {index}/{total} failed (mask or task)",
                 "ICEYE Toolbox",
-                Qgis.Warning,
+                Qgis.MessageLevel.Warning,
             )
             self.iface.messageBar().pushMessage(
                 "ICEYE Toolbox",
                 f"Batch aborted at step {index}: could not start crop/focus.",
-                level=Qgis.Critical,
+                level=Qgis.MessageLevel.Critical,
                 duration=5,
             )
             return BatchStepResult(abort=True)
@@ -211,7 +216,7 @@ class AutofocusTool:
         QgsMessageLog.logMessage(
             f"Batch focus: completed step {self._batch_runner.step_index}/{self._batch_runner.total}",
             "ICEYE Toolbox",
-            Qgis.Info,
+            Qgis.MessageLevel.Info,
         )
 
 
@@ -220,7 +225,7 @@ class AutofocusTask(QgsTask):
 
     def __init__(self, iface, metadata_provider, crop_task) -> None:
         """Initialize the focus task with crop result and metadata provider."""
-        super().__init__("Autofocus", QgsTask.CanCancel)
+        super().__init__("Autofocus", QgsTask.Flag.CanCancel)
         self.iface = iface
         self.crop_task = crop_task
         self.metadata_provider = metadata_provider
@@ -232,7 +237,7 @@ class AutofocusTask(QgsTask):
         QgsMessageLog.logMessage(
             f"Running for {self.crop_task.result_layer.name()}",
             "ICEYE Toolbox",
-            Qgis.Info,
+            Qgis.MessageLevel.Info,
         )
         metadata = self.metadata_provider.get(self.crop_task.result_layer)
         data, _ = read_slc_layer(
@@ -244,14 +249,14 @@ class AutofocusTask(QgsTask):
         QgsMessageLog.logMessage(
             f"Shape: {data.shape}",
             "ICEYE Toolbox",
-            Qgis.Info,
+            Qgis.MessageLevel.Info,
         )
 
         try:
             QgsMessageLog.logMessage(
                 "Autofocus: centered-look PGA (10–25% of azimuth spectrum)",
                 "ICEYE Toolbox",
-                Qgis.Info,
+                Qgis.MessageLevel.Info,
             )
             focused_data = focus_with_centered_looks_pga(
                 data,
@@ -261,14 +266,14 @@ class AutofocusTask(QgsTask):
             QgsMessageLog.logMessage(
                 f"Error in autofocus: {e!s}",
                 "ICEYE Toolbox",
-                Qgis.Critical,
+                Qgis.MessageLevel.Critical,
             )
             return False
 
         QgsMessageLog.logMessage(
             f"Focused data shape: {focused_data.shape}",
             "ICEYE Toolbox",
-            Qgis.Info,
+            Qgis.MessageLevel.Info,
         )
 
         success, new_layer, error = create_focused_raster_layer(
@@ -281,7 +286,7 @@ class AutofocusTask(QgsTask):
             QgsMessageLog.logMessage(
                 f"Failed to create focused layer: {error}",
                 "ICEYE Toolbox",
-                Qgis.Critical,
+                Qgis.MessageLevel.Critical,
             )
             return False
 
@@ -301,14 +306,16 @@ class AutofocusTask(QgsTask):
         QgsMessageLog.logMessage(
             "Finished focus task",
             "ICEYE Toolbox",
-            Qgis.Info,
+            Qgis.MessageLevel.Info,
         )
         QgsProject.instance().removeMapLayer(self.crop_task.result_layer)
         self.crop_task.result_layer = None
         self.crop_task.result_layer_path = None
 
         if not result:
-            self.iface.messageBar().pushMessage("Autofocus failed", level=Qgis.Critical)
+            self.iface.messageBar().pushMessage(
+                "Autofocus failed", level=Qgis.MessageLevel.Critical
+            )
 
             return
 
@@ -357,7 +364,7 @@ def create_focused_raster_layer(
             QgsMessageLog.logMessage(
                 f"Getting metadata from source layer {source_layer.name()}",
                 "ICEYE Toolbox",
-                Qgis.Info,
+                Qgis.MessageLevel.Info,
             )
             try:
                 properties = src_ds.GetMetadata()
@@ -367,32 +374,32 @@ def create_focused_raster_layer(
                     QgsMessageLog.logMessage(
                         f"Metadata set for output raster {output_path}",
                         "ICEYE Toolbox",
-                        Qgis.Info,
+                        Qgis.MessageLevel.Info,
                     )
                 else:
                     QgsMessageLog.logMessage(
                         f"No metadata found in source layer {source_layer.name()}",
                         "ICEYE Toolbox",
-                        Qgis.Warning,
+                        Qgis.MessageLevel.Warning,
                     )
             except KeyError:
                 QgsMessageLog.logMessage(
                     f"Failed to get metadata from source layer {source_layer.name()}",
                     "ICEYE Toolbox",
-                    Qgis.Warning,
+                    Qgis.MessageLevel.Warning,
                 )
             src_ds = None
         else:
             QgsMessageLog.logMessage(
                 f"Failed to open source layer {source_layer.name()}",
                 "ICEYE Toolbox",
-                Qgis.Warning,
+                Qgis.MessageLevel.Warning,
             )
 
         QgsMessageLog.logMessage(
             f"observation direction: {left}",
             "ICEYE Toolbox",
-            Qgis.Info,
+            Qgis.MessageLevel.Info,
         )
 
         if len(focused_data.shape) == 3:
@@ -417,13 +424,13 @@ def create_focused_raster_layer(
             QgsMessageLog.logMessage(
                 f"Built overviews for: {output_path}",
                 "ICEYE Toolbox",
-                Qgis.Info,
+                Qgis.MessageLevel.Info,
             )
         except Exception as e:
             QgsMessageLog.logMessage(
                 f"Failed to build overviews: {str(e)}",
                 "ICEYE Toolbox",
-                Qgis.Warning,
+                Qgis.MessageLevel.Warning,
             )
 
         # Create QgsRasterLayer
@@ -431,7 +438,9 @@ def create_focused_raster_layer(
 
         if not result_layer.isValid():
             error_msg = f"Generated focused layer from {output_path} is not valid"
-            QgsMessageLog.logMessage(error_msg, "ICEYE Toolbox", Qgis.Critical)
+            QgsMessageLog.logMessage(
+                error_msg, "ICEYE Toolbox", Qgis.MessageLevel.Critical
+            )
             return False, None, error_msg
 
         QgsProject.instance().addMapLayer(result_layer, True)
@@ -440,7 +449,7 @@ def create_focused_raster_layer(
 
     except Exception as e:
         error_msg = f"Error creating focused raster: {str(e)}"
-        QgsMessageLog.logMessage(error_msg, "ICEYE Toolbox", Qgis.Critical)
+        QgsMessageLog.logMessage(error_msg, "ICEYE Toolbox", Qgis.MessageLevel.Critical)
         return False, None, error_msg
 
 
@@ -623,13 +632,13 @@ def focus_with_centered_looks_pga(
         f"{rows} x {cols}, look azimuth rows {look_heights} "
         f"(from {', '.join(f'{f:.0%}' for f in azimuth_look_fractions)} of azimuth; duplicates dropped if crop is small)",
         "ICEYE Toolbox",
-        Qgis.Info,
+        Qgis.MessageLevel.Info,
     )
     if not look_heights:
         QgsMessageLog.logMessage(
             "Centered-look PGA: empty look list; returning input unchanged",
             "ICEYE Toolbox",
-            Qgis.Warning,
+            Qgis.MessageLevel.Warning,
         )
         return data
 
@@ -654,7 +663,7 @@ def focus_with_centered_looks_pga(
                 f"Centered-look PGA: look {i + 1}/{n_eval} "
                 f"(azimuth_rows={azimuth_look_size}): no strong-pulse patch, skip",
                 "ICEYE Toolbox",
-                Qgis.Warning,
+                Qgis.MessageLevel.Warning,
             )
             if progress_callback is not None:
                 progress_callback(100.0 * (i + 1) / n_eval)
@@ -676,7 +685,7 @@ def focus_with_centered_looks_pga(
             f"azimuth_rows={azimuth_look_size}, patch {patch.shape}, "
             f"entropy={score:.6f}{' (best so far)' if is_best else ''}",
             "ICEYE Toolbox",
-            Qgis.Info,
+            Qgis.MessageLevel.Info,
         )
 
         if progress_callback is not None:
@@ -687,7 +696,7 @@ def focus_with_centered_looks_pga(
             "Centered-look PGA: no valid phase estimate from any look; "
             "returning input unchanged",
             "ICEYE Toolbox",
-            Qgis.Warning,
+            Qgis.MessageLevel.Warning,
         )
         return data
 
@@ -696,6 +705,6 @@ def focus_with_centered_looks_pga(
         f"look index {best_look_idx + 1}/{n_eval} "
         f"(azimuth_rows={best_look_rows}, entropy={best_entropy:.6f})",
         "ICEYE Toolbox",
-        Qgis.Info,
+        Qgis.MessageLevel.Info,
     )
     return best

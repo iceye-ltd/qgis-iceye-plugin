@@ -47,7 +47,7 @@ def _find_alpha_band(layer: QgsRasterLayer) -> int | None:
     if not isinstance(p, QgsRasterDataProvider):
         return None
     for band_idx in range(1, layer.bandCount() + 1):
-        if p.colorInterpretation(band_idx) == QgsRaster.AlphaBand:
+        if p.colorInterpretation(band_idx) == QgsRaster.ColorInterpretation.AlphaBand:
             return band_idx
     return None
 
@@ -89,7 +89,7 @@ class AutoStyler(QObject):
                 QgsMessageLog.logMessage(
                     f"Failed to style {layer.name()}: {msg}",
                     "ICEYE Toolbox",
-                    Qgis.Warning,
+                    Qgis.MessageLevel.Warning,
                 )
 
         # Apply temporal properties to all ICEYE products including QLK (skip shorts - handled in VideoProcessingTask)
@@ -123,19 +123,19 @@ def build_shader_from_tonemap(tonemap: NDArray[np.float64]) -> QgsRasterShader:
     ValueError
         If tonemap values are outside [0, 1].
     """
-    QgsMessageLog.logMessage(f"{tonemap}", "ICEYE Toolbox", Qgis.Info)
+    QgsMessageLog.logMessage(f"{tonemap}", "ICEYE Toolbox", Qgis.MessageLevel.Info)
     if np.max(tonemap) > 1.0 or np.min(tonemap) < 0.0:
         raise ValueError("tonemap must be between 0 and 1")
 
     items = []
     g = np.floor(255.0 * tonemap).astype(np.uint8)
-    QgsMessageLog.logMessage(f"{g}", "ICEYE Toolbox", Qgis.Info)
+    QgsMessageLog.logMessage(f"{g}", "ICEYE Toolbox", Qgis.MessageLevel.Info)
 
     for v, c in zip(tonemap, g):
         items.append(QgsColorRampShader.ColorRampItem(v, QColor(c, c, c)))
 
     ramp = QgsColorRampShader()
-    ramp.setColorRampType(QgsColorRampShader.Interpolated)
+    ramp.setColorRampType(QgsColorRampShader.Type.Interpolated)
     ramp.setColorRampItemList(items)
 
     shader = QgsRasterShader()
@@ -145,8 +145,8 @@ def build_shader_from_tonemap(tonemap: NDArray[np.float64]) -> QgsRasterShader:
 
 def build_shader_from_color_ramp(
     color_ramp: QgsColorRamp,
-    ramp_type: int = QgsColorRampShader.Interpolated,
-    classification_mode: int = QgsColorRampShader.Continuous,
+    ramp_type: int = QgsColorRampShader.Type.Interpolated,
+    classification_mode: int = QgsColorRampShader.ClassificationMode.Continuous,
 ) -> QgsColorRampShader:
     """Build a QgsColorRampShader from a QgsColorRamp.
 

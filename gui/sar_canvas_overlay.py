@@ -79,6 +79,23 @@ def _map_point_to_scene(canvas, map_point) -> QPointF:
     return view.mapToScene(int(canvas_pt.x()), int(canvas_pt.y()))
 
 
+def _local_event_pos(event):
+    """Widget-local cursor position for mouse/wheel events (Qt5 pos vs Qt6 position)."""
+    if hasattr(event, "position"):
+        return event.position().toPoint()
+    return event.pos()
+
+
+def _wheel_delta_steps(event) -> float:
+    """Normalize wheel delta to ~1 per notch (angleDelta, else pixelDelta)."""
+    delta_y = event.angleDelta().y()
+    if delta_y == 0:
+        delta_y = event.pixelDelta().y()
+    if delta_y == 0:
+        return 0.0
+    return delta_y / 120.0
+
+
 class SARItemPlacementTool(QgsMapTool):
     """Persistent map tool: drag, place, and right-click-remove any SAR overlay item.
 
@@ -118,7 +135,7 @@ class SARItemPlacementTool(QgsMapTool):
 
     def canvasPressEvent(self, event) -> None:
         """Begin dragging when the left button is pressed on a placed item."""
-        if event.button() != Qt.LeftButton:
+        if event.button() != Qt.MouseButton.LeftButton:
             return
         hit = self._hit_item(event.mapPoint())
         if hit is not None:
@@ -136,15 +153,15 @@ class SARItemPlacementTool(QgsMapTool):
 
     def canvasReleaseEvent(self, event) -> None:
         """Finish drag, emit placed/moved, or show removal context menu on right-click."""
-        if event.button() == Qt.RightButton:
+        if event.button() == Qt.MouseButton.RightButton:
             hit = self._hit_item(event.mapPoint())
             if hit is not None:
                 menu = QMenu(self.canvas())
                 remove_action = menu.addAction(_tr(self._remove_label))
-                if menu.exec_(self.canvas().mapToGlobal(event.pos())) is remove_action:
+                if menu.exec(self.canvas().mapToGlobal(event.pos())) is remove_action:
                     self.removed.emit(hit)
             return
-        if event.button() != Qt.LeftButton:
+        if event.button() != Qt.MouseButton.LeftButton:
             return
         if self.dragging is not None:
             dropped = self.dragging
@@ -206,26 +223,26 @@ class BaseInteractionFilter(QObject):
 
         etype = event.type()
 
-        if etype == QEvent.MouseButtonPress:
+        if etype == QEvent.Type.MouseButtonPress:
             return self._handle_press(event)
-        if etype == QEvent.MouseMove:
+        if etype == QEvent.Type.MouseMove:
             return self._handle_move(event)
-        if etype == QEvent.MouseButtonRelease:
+        if etype == QEvent.Type.MouseButtonRelease:
             return self._handle_release(event)
-        if etype == QEvent.Wheel:
+        if etype == QEvent.Type.Wheel:
             return self._handle_wheel(event)
 
         return False
 
     def _handle_press(self, event):
-        if event.button() == Qt.LeftButton:
+        if event.button() == Qt.MouseButton.LeftButton:
             map_point = self._viewport_to_map(event.pos())
             hit = self._hit_item(map_point)
             if hit is not None:
                 self._dragging = hit
                 return True
 
-        elif event.button() == Qt.RightButton:
+        elif event.button() == Qt.MouseButton.RightButton:
             map_point = self._viewport_to_map(event.pos())
             hit = self._hit_item(map_point)
             if hit is not None:
@@ -251,21 +268,21 @@ class BaseInteractionFilter(QObject):
         return True
 
     def _handle_release(self, event):
-        if event.button() == Qt.RightButton:
+        if event.button() == Qt.MouseButton.RightButton:
             map_point = self._viewport_to_map(event.pos())
             hit = self._hit_item(map_point)
             if hit is not None:
                 menu = QMenu()
                 remove_action = menu.addAction(_tr(self._remove_label))
                 if (
-                    menu.exec_(self._canvas.viewport().mapToGlobal(event.pos()))
+                    menu.exec(self._canvas.viewport().mapToGlobal(event.pos()))
                     is remove_action
                 ):
                     self._on_removed(hit)
                 return True
             return False
 
-        if event.button() == Qt.LeftButton and self._dragging is not None:
+        if event.button() == Qt.MouseButton.LeftButton and self._dragging is not None:
             dropped = self._dragging
             self._dragging = None
             self._on_moved(dropped, dropped._geo_point)

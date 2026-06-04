@@ -82,7 +82,7 @@ def batch_mask_square_extent(
         QgsMessageLog.logMessage(
             "Batch mask: could not transform click to WGS84",
             "ICEYE Toolbox",
-            Qgis.Warning,
+            Qgis.MessageLevel.Warning,
         )
         return None
 
@@ -100,7 +100,7 @@ def batch_mask_square_extent(
         QgsMessageLog.logMessage(
             "Batch mask: could not transform click to UTM",
             "ICEYE Toolbox",
-            Qgis.Warning,
+            Qgis.MessageLevel.Warning,
         )
         return None
 
@@ -118,7 +118,7 @@ def batch_mask_square_extent(
         QgsMessageLog.logMessage(
             "Batch mask: could not transform square to map CRS",
             "ICEYE Toolbox",
-            Qgis.Warning,
+            Qgis.MessageLevel.Warning,
         )
         return None
 
@@ -131,11 +131,11 @@ class BatchMaskMapTool(QgsMapTool):
     def __init__(self, canvas, batch_action: "BatchToolbarAction") -> None:
         super().__init__(canvas)
         self._batch = batch_action
-        self.setCursor(QCursor(Qt.CrossCursor))
+        self.setCursor(QCursor(Qt.CursorShape.CrossCursor))
 
     def canvasReleaseEvent(self, event) -> None:
         """On left click, add a batch mask at the map location."""
-        if event.button() != Qt.LeftButton:
+        if event.button() != Qt.MouseButton.LeftButton:
             return
         self._batch.place_mask_at(event.mapPoint())
 
@@ -215,7 +215,9 @@ class BatchToolbarAction:
         self.toolbar.addAction(self.toggle_action)
 
         self._process_tool_btn = QToolButton(self.toolbar)
-        self._process_tool_btn.setPopupMode(QToolButton.MenuButtonPopup)
+        self._process_tool_btn.setPopupMode(
+            QToolButton.ToolButtonPopupMode.MenuButtonPopup
+        )
         self._process_tool_btn.setToolTip(
             _tr(
                 "Run on selected polygon mask layers. ICEYE source: active base raster, or "
@@ -371,7 +373,7 @@ class BatchToolbarAction:
             self.iface.messageBar().pushMessage(
                 _tr("ICEYE Toolbox"),
                 _tr("Could not build mask extent at this location."),
-                level=Qgis.Warning,
+                level=Qgis.MessageLevel.Warning,
                 duration=4,
             )
             return
@@ -389,7 +391,7 @@ class BatchToolbarAction:
             _tr("Added {name}. Select mask layer(s) and run batch when ready.").format(
                 name=name
             ),
-            level=Qgis.Info,
+            level=Qgis.MessageLevel.Info,
             duration=3,
         )
 
@@ -430,7 +432,7 @@ class BatchToolbarAction:
             self.iface.messageBar().pushMessage(
                 _tr("ICEYE Toolbox"),
                 err or _tr("Cannot run batch."),
-                level=Qgis.Warning,
+                level=Qgis.MessageLevel.Warning,
                 duration=6,
             )
             return
@@ -442,7 +444,7 @@ class BatchToolbarAction:
             self.iface.messageBar().pushMessage(
                 _tr("ICEYE Toolbox"),
                 _tr("Batch color is not available."),
-                level=Qgis.Warning,
+                level=Qgis.MessageLevel.Warning,
                 duration=4,
             )
             return
@@ -451,7 +453,7 @@ class BatchToolbarAction:
             self.iface.messageBar().pushMessage(
                 _tr("ICEYE Toolbox"),
                 err or _tr("Cannot run batch."),
-                level=Qgis.Warning,
+                level=Qgis.MessageLevel.Warning,
                 duration=6,
             )
             return
@@ -463,7 +465,7 @@ class BatchToolbarAction:
             self.iface.messageBar().pushMessage(
                 _tr("ICEYE Toolbox"),
                 _tr("Batch focus is not available."),
-                level=Qgis.Warning,
+                level=Qgis.MessageLevel.Warning,
                 duration=4,
             )
             return
@@ -472,7 +474,7 @@ class BatchToolbarAction:
             self.iface.messageBar().pushMessage(
                 _tr("ICEYE Toolbox"),
                 err or _tr("Cannot run batch."),
-                level=Qgis.Warning,
+                level=Qgis.MessageLevel.Warning,
                 duration=6,
             )
             return
@@ -484,7 +486,7 @@ class BatchToolbarAction:
             self.iface.messageBar().pushMessage(
                 _tr("ICEYE Toolbox"),
                 _tr("Batch video is not available."),
-                level=Qgis.Warning,
+                level=Qgis.MessageLevel.Warning,
                 duration=4,
             )
             return
@@ -493,7 +495,7 @@ class BatchToolbarAction:
             self.iface.messageBar().pushMessage(
                 _tr("ICEYE Toolbox"),
                 err or _tr("Cannot run batch."),
-                level=Qgis.Warning,
+                level=Qgis.MessageLevel.Warning,
                 duration=6,
             )
             return

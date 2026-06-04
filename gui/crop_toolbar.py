@@ -72,7 +72,7 @@ class CropToolbarAction:
         self.crop_btn = QToolButton(self.iface.mainWindow())
         self.crop_btn.setObjectName("ICEYECropToolButton")
         self.crop_btn.setCheckable(True)
-        self.crop_btn.setPopupMode(QToolButton.MenuButtonPopup)
+        self.crop_btn.setPopupMode(QToolButton.ToolButtonPopupMode.MenuButtonPopup)
         self.crop_btn.setStatusTip(_tr("Toggle crop tool"))
         self.crop_btn.clicked.connect(self._toggle_crop)
 
@@ -172,7 +172,7 @@ class CropToolbarAction:
             x = _ICON_PX - _BADGE_PX - 1
             y = _ICON_PX - _BADGE_PX - 1
             painter.setBrush(QColor(255, 255, 255, 230))
-            painter.setPen(Qt.NoPen)
+            painter.setPen(Qt.PenStyle.NoPen)
             painter.drawEllipse(x - 1, y - 1, _BADGE_PX + 2, _BADGE_PX + 2)
             painter.drawPixmap(x, y, badge)
         painter.end()

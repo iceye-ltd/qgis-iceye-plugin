@@ -67,7 +67,7 @@ class CanvasRotationTool(QObject):
             QgsMessageLog.logMessage(
                 "No geometry found",
                 "ICEYE Toolbox",
-                Qgis.Warning,
+                Qgis.MessageLevel.Warning,
             )
             return
         angle = self.geometry.shadow - 180 + self.geometry.north
@@ -75,7 +75,7 @@ class CanvasRotationTool(QObject):
         QgsMessageLog.logMessage(
             f"Canvas rotated to align shadows downward to {angle}°",
             "ICEYE Toolbox",
-            Qgis.Info,
+            Qgis.MessageLevel.Info,
         )
 
     def toLayoverUp(self) -> None:
@@ -84,7 +84,7 @@ class CanvasRotationTool(QObject):
             QgsMessageLog.logMessage(
                 "No geometry found",
                 "ICEYE Toolbox",
-                Qgis.Warning,
+                Qgis.MessageLevel.Warning,
             )
             return
         angle = self.geometry.north - self.geometry.layover
@@ -92,13 +92,15 @@ class CanvasRotationTool(QObject):
         QgsMessageLog.logMessage(
             f"Canvas rotated to align layover upward to {angle}°",
             "ICEYE Toolbox",
-            Qgis.Info,
+            Qgis.MessageLevel.Info,
         )
 
     def toNorthUp(self) -> None:
         """Reset canvas rotation to North up."""
         self.setRotation(0)
-        QgsMessageLog.logMessage("Canvas reset to North up", "ICEYE Toolbox", Qgis.Info)
+        QgsMessageLog.logMessage(
+            "Canvas reset to North up", "ICEYE Toolbox", Qgis.MessageLevel.Info
+        )
 
     def setRotation(self, angle: float) -> None:
         """Set canvas rotation angle in degrees."""
@@ -164,15 +166,17 @@ class MandalaItem(QGraphicsItemGroup):
         self.setAcceptHoverEvents(True)
 
         if movable:
-            self.setFlag(QGraphicsItem.ItemIsMovable, True)
-            self.setFlag(QGraphicsItem.ItemIsSelectable, True)
+            self.setFlag(QGraphicsItem.GraphicsItemFlag.ItemIsMovable, True)
+            self.setFlag(QGraphicsItem.GraphicsItemFlag.ItemIsSelectable, True)
 
         self.diameter = 100
         self.ring_width = 30
         self.ring = QGraphicsEllipseItem(
             -self.diameter / 2, -self.diameter / 2, self.diameter, self.diameter, self
         )
-        self.ring.setPen(QPen(QColor("whitesmoke"), self.ring_width, Qt.SolidLine))
+        self.ring.setPen(
+            QPen(QColor("whitesmoke"), self.ring_width, Qt.PenStyle.SolidLine)
+        )
         self.ring.setOpacity(0.3)
         self.addToGroup(self.ring)
 
@@ -180,7 +184,7 @@ class MandalaItem(QGraphicsItemGroup):
         self.inner_disc = QGraphicsEllipseItem(
             -inner_disc_d / 2, -inner_disc_d / 2, inner_disc_d, inner_disc_d, self
         )
-        self.inner_disc.setPen(QPen(Qt.NoPen))
+        self.inner_disc.setPen(QPen(Qt.PenStyle.NoPen))
         self.inner_disc.setBrush(QBrush(QColor("black")))
         self.inner_disc.setOpacity(0.3)
         self.addToGroup(self.inner_disc)
@@ -188,9 +192,9 @@ class MandalaItem(QGraphicsItemGroup):
         # Direction lines — fixed length, always readable regardless of scale
         line_tip = self.diameter / 2
         self.layover_line = QGraphicsLineItem(0, 0, line_tip, 0, self.ring)
-        self.layover_line.setPen(QPen(QColor("plum"), 3, Qt.SolidLine))
+        self.layover_line.setPen(QPen(QColor("plum"), 3, Qt.PenStyle.SolidLine))
         self.shadow_line = QGraphicsLineItem(0, 0, line_tip, 0, self.ring)
-        self.shadow_line.setPen(QPen(QColor("sandybrown"), 3, Qt.SolidLine))
+        self.shadow_line.setPen(QPen(QColor("sandybrown"), 3, Qt.PenStyle.SolidLine))
         self.addToGroup(self.layover_line)
         self.addToGroup(self.shadow_line)
 
@@ -234,12 +238,12 @@ class MandalaItem(QGraphicsItemGroup):
         self.shadows_arrow.setVisible(True)
 
         halo_d = self.diameter + self.ring_width + 10
-        _halo_pen = QPen(QColor(255, 215, 0, 140), 6, Qt.SolidLine)
+        _halo_pen = QPen(QColor(255, 215, 0, 140), 6, Qt.PenStyle.SolidLine)
         self._halo = QGraphicsEllipseItem(
             -halo_d / 2, -halo_d / 2, halo_d, halo_d, self
         )
         self._halo.setPen(_halo_pen)
-        self._halo.setBrush(QBrush(Qt.NoBrush))
+        self._halo.setBrush(QBrush(Qt.BrushStyle.NoBrush))
         self._halo.setVisible(False)
         self.addToGroup(self._halo)
 
@@ -355,8 +359,8 @@ class ArrowItem(QGraphicsItem):
         path.closeSubpath()
         painter.fillPath(path, self.color)
         if self.label:
-            painter.setPen(QPen(Qt.white, 1, Qt.SolidLine))
-            painter.setFont(QFont("Arial", 8, QFont.Bold))
+            painter.setPen(QPen(Qt.GlobalColor.white, 1, Qt.PenStyle.SolidLine))
+            painter.setFont(QFont("Arial", 8, QFont.Weight.Bold))
 
             # Save the current transform
             painter.save()
@@ -451,7 +455,7 @@ class MandalaToolbarAction(SAROverlayToolbarBase):
         self._place_btn.setToolTip(_tr("Place / Move SAR Mandala"))
         self._place_btn.setCheckable(True)
         self._place_btn.setMenu(place_menu)
-        self._place_btn.setPopupMode(QToolButton.MenuButtonPopup)
+        self._place_btn.setPopupMode(QToolButton.ToolButtonPopupMode.MenuButtonPopup)
         self._place_btn.clicked.connect(self._activate_tool)
         self.toolbar.addWidget(self._place_btn)
 
@@ -528,7 +532,7 @@ class MandalaToolbarAction(SAROverlayToolbarBase):
             QgsMessageLog.logMessage(
                 "No active ICEYE layer — activate an ICEYE layer first",
                 "ICEYE Toolbox",
-                Qgis.Warning,
+                Qgis.MessageLevel.Warning,
             )
             return
 
@@ -539,7 +543,7 @@ class MandalaToolbarAction(SAROverlayToolbarBase):
             QgsMessageLog.logMessage(
                 "Could not compute geometry for the clicked location",
                 "ICEYE Toolbox",
-                Qgis.Warning,
+                Qgis.MessageLevel.Warning,
             )
             return
 

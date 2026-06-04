@@ -372,7 +372,7 @@ class TestRenderFunctions:
 
         def _fake_render(_layer, _extent, **_kw):
             called["count"] += 1
-            return (QImage(10, 10, QImage.Format_ARGB32), False)
+            return (QImage(10, 10, QImage.Format.Format_ARGB32), False)
 
         monkeypatch.setattr(lens_tool._modes["color"], "render", _fake_render)
         lens_tool.set_render_mode("color")
