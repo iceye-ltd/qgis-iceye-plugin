@@ -17,7 +17,7 @@ body:
     id: qgis-version
     attributes:
       label: QGIS version
-      description: e.g. 3.44.0 — Help → About QGIS
+      description: e.g. 3.44.0 or 4.0.0 — Help → About QGIS
     validations:
       required: true
   - type: dropdown
