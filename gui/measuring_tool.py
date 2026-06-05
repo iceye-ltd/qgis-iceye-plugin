@@ -32,7 +32,9 @@ from .sar_canvas_overlay import (
     BaseInteractionFilter,
     SARItemPlacementTool,
     SAROverlayToolbarBase,
+    _local_event_pos,
     _map_point_to_scene,
+    _wheel_delta_steps,
 )
 from .toolbar_button_policy import ToolbarButtonPolicy
 
@@ -62,8 +64,8 @@ class HeightRulerItem(QGraphicsItemGroup):
         """
         super().__init__()
         self.setPos(pos)
-        self.setFlag(QGraphicsItem.ItemIsMovable, True)
-        self.setFlag(QGraphicsItem.ItemIsSelectable, True)
+        self.setFlag(QGraphicsItem.GraphicsItemFlag.ItemIsMovable, True)
+        self.setFlag(QGraphicsItem.GraphicsItemFlag.ItemIsSelectable, True)
         self.setAcceptHoverEvents(True)
 
         self._canvas = canvas
@@ -78,25 +80,25 @@ class HeightRulerItem(QGraphicsItemGroup):
         self._geo_point = None
         self._layer_id: str | None = None
 
-        _halo_pen = QPen(QColor(255, 215, 0, 140), 14, Qt.SolidLine)
-        _halo_pen.setCapStyle(Qt.RoundCap)
-        _halo_pen.setJoinStyle(Qt.RoundJoin)
+        _halo_pen = QPen(QColor(255, 215, 0, 140), 14, Qt.PenStyle.SolidLine)
+        _halo_pen.setCapStyle(Qt.PenCapStyle.RoundCap)
+        _halo_pen.setJoinStyle(Qt.PenJoinStyle.RoundJoin)
         self._halo = QGraphicsPathItem(self)
         self._halo.setPen(_halo_pen)
         self._halo.setVisible(False)
 
         self.shadow_line = QGraphicsLineItem(0, 0, 50, 0, self)
-        self.shadow_line.setPen(QPen(QColor("sandybrown"), 4, Qt.SolidLine))
+        self.shadow_line.setPen(QPen(QColor("sandybrown"), 4, Qt.PenStyle.SolidLine))
         self.shadow_line.setRotation(self._rot_shadow)
 
         self.layover_line = QGraphicsLineItem(0, 0, 50, 0, self)
-        self.layover_line.setPen(QPen(QColor("plum"), 4, Qt.SolidLine))
+        self.layover_line.setPen(QPen(QColor("plum"), 4, Qt.PenStyle.SolidLine))
         self.layover_line.setRotation(self._rot_layover)
 
-        label_font = QFont("Arial", 10, QFont.Bold)
+        label_font = QFont("Arial", 10, QFont.Weight.Bold)
 
         self._label_bg = QGraphicsPathItem(self)
-        self._label_bg.setPen(QPen(Qt.NoPen))
+        self._label_bg.setPen(QPen(Qt.PenStyle.NoPen))
         self._label_bg.setBrush(QBrush(QColor(0, 0, 0, 180)))
 
         self._height_label = QGraphicsTextItem(self)
@@ -221,17 +223,19 @@ class RulerInteractionFilter(BaseInteractionFilter):
 
     def _handle_wheel(self, event) -> bool:
         modifiers = event.modifiers()
-        if modifiers & Qt.ShiftModifier:
+        if modifiers & Qt.KeyboardModifier.ShiftModifier:
             step_multiplier = 10.0
-        elif modifiers & Qt.ControlModifier:
+        elif modifiers & Qt.KeyboardModifier.ControlModifier:
             step_multiplier = 1.0
         else:
             return False
-        map_point = self._viewport_to_map(event.pos())
+        map_point = self._viewport_to_map(_local_event_pos(event))
         hit = self._hit_item(map_point)
         if hit is None:
             return False
-        delta = event.angleDelta().y() / 120
+        delta = _wheel_delta_steps(event)
+        if delta == 0:
+            return False
         sin_theta = math.sin(math.radians(hit._incidence))
         if hit._is_slc:
             step = hit._range_spacing / sin_theta if sin_theta > 1e-6 else 1.0
@@ -304,7 +308,7 @@ class MeasuringToolbarAction(SAROverlayToolbarBase):
         self._place_btn.setToolTip(_tr("Place Height Ruler"))
         self._place_btn.setCheckable(True)
         self._place_btn.setMenu(place_menu)
-        self._place_btn.setPopupMode(QToolButton.MenuButtonPopup)
+        self._place_btn.setPopupMode(QToolButton.ToolButtonPopupMode.MenuButtonPopup)
         self._place_btn.clicked.connect(self._activate_tool)
         self.toolbar.addWidget(self._place_btn)
 
@@ -368,7 +372,7 @@ class MeasuringToolbarAction(SAROverlayToolbarBase):
             QgsMessageLog.logMessage(
                 "No active ICEYE layer — activate an ICEYE layer first",
                 "ICEYE Toolbox",
-                Qgis.Warning,
+                Qgis.MessageLevel.Warning,
             )
             return
 
@@ -458,7 +462,7 @@ class MeasuringToolbarAction(SAROverlayToolbarBase):
             self.iface.messageBar().pushMessage(
                 _tr("IRF Analysis"),
                 _tr("No active ICEYE layer — activate an SLC layer first."),
-                level=Qgis.Warning,
+                level=Qgis.MessageLevel.Warning,
                 duration=4,
             )
             self._activate_irf(False)
@@ -469,7 +473,7 @@ class MeasuringToolbarAction(SAROverlayToolbarBase):
             self.iface.messageBar().pushMessage(
                 _tr("IRF Analysis"),
                 _tr("Could not map click position to raster pixel coordinates."),
-                level=Qgis.Warning,
+                level=Qgis.MessageLevel.Warning,
                 duration=4,
             )
             self._activate_irf(False)
@@ -481,7 +485,7 @@ class MeasuringToolbarAction(SAROverlayToolbarBase):
             self.iface.messageBar().pushMessage(
                 _tr("IRF Analysis"),
                 _tr("Failed to read SLC chip from layer."),
-                level=Qgis.Critical,
+                level=Qgis.MessageLevel.Critical,
                 duration=4,
             )
             self._activate_irf(False)
@@ -504,12 +508,12 @@ class MeasuringToolbarAction(SAROverlayToolbarBase):
             QgsMessageLog.logMessage(
                 f"IRF analysis failed: {e}",
                 "ICEYE Toolbox",
-                Qgis.Critical,
+                Qgis.MessageLevel.Critical,
             )
             self.iface.messageBar().pushMessage(
                 _tr("IRF Analysis"),
                 _tr(f"Analysis failed: {e}"),
-                level=Qgis.Critical,
+                level=Qgis.MessageLevel.Critical,
                 duration=5,
             )
             self._activate_irf(False)

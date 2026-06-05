@@ -47,7 +47,7 @@ def _to_qdatetime_utc(dt: datetime) -> QDateTime:
         QDateTime in UTC.
     """
     msecs = int(dt.timestamp() * 1000)
-    return QDateTime.fromMSecsSinceEpoch(msecs, Qt.UTC)
+    return QDateTime.fromMSecsSinceEpoch(msecs, Qt.TimeSpec.UTC)
 
 
 def apply_temporal_properties(layer: QgsRasterLayer, metadata: IceyeMetadata) -> bool:
@@ -71,7 +71,7 @@ def apply_temporal_properties(layer: QgsRasterLayer, metadata: IceyeMetadata) ->
         QgsMessageLog.logMessage(
             "No metadata provided for temporal properties",
             "ICEYE Toolbox",
-            level=Qgis.Warning,
+            level=Qgis.MessageLevel.Warning,
         )
         return False
 
@@ -79,7 +79,7 @@ def apply_temporal_properties(layer: QgsRasterLayer, metadata: IceyeMetadata) ->
         QgsMessageLog.logMessage(
             "No layer provided for temporal properties",
             "ICEYE Toolbox",
-            level=Qgis.Warning,
+            level=Qgis.MessageLevel.Warning,
         )
         return False
 
@@ -87,7 +87,7 @@ def apply_temporal_properties(layer: QgsRasterLayer, metadata: IceyeMetadata) ->
         QgsMessageLog.logMessage(
             f"Layer {layer.name() if hasattr(layer, 'name') else 'unknown'} is not a raster layer",
             "ICEYE Toolbox",
-            level=Qgis.Warning,
+            level=Qgis.MessageLevel.Warning,
         )
         return False
 
@@ -98,7 +98,7 @@ def apply_temporal_properties(layer: QgsRasterLayer, metadata: IceyeMetadata) ->
         QgsMessageLog.logMessage(
             f"Invalid datetime values in metadata for layer {layer.name()}: start={metadata.start_datetime}, end={metadata.end_datetime}",
             "ICEYE Toolbox",
-            level=Qgis.Warning,
+            level=Qgis.MessageLevel.Warning,
         )
         return False
 
@@ -108,7 +108,7 @@ def apply_temporal_properties(layer: QgsRasterLayer, metadata: IceyeMetadata) ->
             QgsMessageLog.logMessage(
                 f"No temporal properties available for layer {layer.name()}",
                 "ICEYE Toolbox",
-                level=Qgis.Warning,
+                level=Qgis.MessageLevel.Warning,
             )
             return False
 
@@ -124,7 +124,7 @@ def apply_temporal_properties(layer: QgsRasterLayer, metadata: IceyeMetadata) ->
         QgsMessageLog.logMessage(
             f"Failed to apply temporal properties to {layer.name()}: {e!s}",
             "ICEYE Toolbox",
-            level=Qgis.Warning,
+            level=Qgis.MessageLevel.Warning,
         )
         return False
 
@@ -160,7 +160,7 @@ def apply_temporal_properties_for_frames(
     p = layer.dataProvider()
     if isinstance(p, QgsRasterDataProvider):
         ci = p.colorInterpretation(num_bands)
-        if ci == QgsRaster.AlphaBand:
+        if ci == QgsRaster.ColorInterpretation.AlphaBand:
             num_bands -= 1
 
     start_dt = _parse_datetime(metadata.start_datetime)
@@ -207,6 +207,6 @@ def apply_temporal_properties_for_frames(
         QgsMessageLog.logMessage(
             f"Failed to apply temporal properties for frames {layer.name()}: {e!s}",
             "ICEYE Toolbox",
-            level=Qgis.Warning,
+            level=Qgis.MessageLevel.Warning,
         )
         return False

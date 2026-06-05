@@ -19,7 +19,7 @@
 
 ## Testing
 
-<!-- How did you verify this? e.g. manual steps in QGIS, `./run_tests.sh` -->
+<!-- How did you verify this? e.g. manual steps in QGIS, `make test` -->
 
 ## Checklist
 

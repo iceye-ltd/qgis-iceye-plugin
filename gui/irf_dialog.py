@@ -59,7 +59,7 @@ class ProfileWidget(QWidget):
         self._spacing_m = spacing_m
         self._line_color = QColor(line_color)
         self.setMinimumSize(360, 240)
-        self.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
+        self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
 
     def paintEvent(self, event) -> None:
         """Draw axes, grid, reference line, and profile curve."""
@@ -83,7 +83,7 @@ class ProfileWidget(QWidget):
             return QPointF(px, py)
 
         p = QPainter(self)
-        p.setRenderHint(QPainter.Antialiasing)
+        p.setRenderHint(QPainter.RenderHint.Antialiasing)
 
         # Backgrounds
         p.fillRect(0, 0, w, h, QColor(255, 255, 255))
@@ -100,26 +100,26 @@ class ProfileWidget(QWidget):
             if db_val < y_min:
                 break
             pt = to_px(x_min_m, float(db_val))
-            p.setPen(QPen(QColor(200, 200, 200), 1, Qt.SolidLine))
+            p.setPen(QPen(QColor(200, 200, 200), 1, Qt.PenStyle.SolidLine))
             p.drawLine(QPointF(ml, pt.y()), QPointF(ml + pw, pt.y()))
             label = str(db_val)
             lw = fm.horizontalAdvance(label)
             p.setPen(QColor(80, 80, 80))
             p.drawText(
                 QRectF(ml - lw - 6, pt.y() - 8, lw + 4, 16),
-                Qt.AlignRight | Qt.AlignVCenter,
+                Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter,
                 label,
             )
 
         # −3 dB reference line
         ref_pt = to_px(x_min_m, -3.0)
-        p.setPen(QPen(QColor(230, 70, 70), 1.3, Qt.DashLine))
+        p.setPen(QPen(QColor(230, 70, 70), 1.3, Qt.PenStyle.DashLine))
         p.drawLine(QPointF(ml, ref_pt.y()), QPointF(ml + pw, ref_pt.y()))
         p.setPen(QColor(230, 70, 70))
         p.setFont(QFont("Arial", 7))
         p.drawText(
             QRectF(ml + pw + 2, ref_pt.y() - 7, mr + 10, 14),
-            Qt.AlignLeft | Qt.AlignVCenter,
+            Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter,
             "-3",
         )
         p.setFont(small_font)
@@ -128,7 +128,7 @@ class ProfileWidget(QWidget):
         half_win_m = self._X_WINDOW_M / 2.0
         i_min = max(0, int(half - half_win_m / self._spacing_m))
         i_max = min(n, int(half + half_win_m / self._spacing_m) + 1)
-        p.setPen(QPen(self._line_color, 1.8, Qt.SolidLine))
+        p.setPen(QPen(self._line_color, 1.8, Qt.PenStyle.SolidLine))
         prev: QPointF | None = None
         for i in range(i_min, i_max):
             val = self._profile[i]
@@ -142,9 +142,9 @@ class ProfileWidget(QWidget):
         p.drawRect(ml, mt, pw, ph)
 
         # Title
-        p.setFont(QFont("Arial", 10, QFont.Bold))
+        p.setFont(QFont("Arial", 10, QFont.Weight.Bold))
         p.setPen(QColor(40, 40, 40))
-        p.drawText(QRectF(ml, 2, pw, mt - 2), Qt.AlignCenter, self._title)
+        p.drawText(QRectF(ml, 2, pw, mt - 2), Qt.AlignmentFlag.AlignCenter, self._title)
 
         # Y-axis label (rotated, left of plot)
         p.save()
@@ -152,13 +152,17 @@ class ProfileWidget(QWidget):
         p.rotate(-90)
         p.setFont(QFont("Arial", 9))
         p.setPen(QColor(80, 80, 80))
-        p.drawText(QRectF(-ph / 2, -10, ph, 20), Qt.AlignCenter, "Amplitude (dB)")
+        p.drawText(
+            QRectF(-ph / 2, -10, ph, 20), Qt.AlignmentFlag.AlignCenter, "Amplitude (dB)"
+        )
         p.restore()
 
         # X-axis label
         p.setFont(small_font)
         p.setPen(QColor(80, 80, 80))
-        p.drawText(QRectF(ml, mt + ph + 20, pw, 14), Qt.AlignCenter, "Offset (m)")
+        p.drawText(
+            QRectF(ml, mt + ph + 20, pw, 14), Qt.AlignmentFlag.AlignCenter, "Offset (m)"
+        )
 
         # X-axis tick labels (three ticks: left, centre, right)
         p.setPen(QColor(80, 80, 80))
@@ -168,7 +172,9 @@ class ProfileWidget(QWidget):
             lw = fm.horizontalAdvance(label)
             px = ml + frac * pw
             p.drawText(
-                QRectF(px - lw / 2, mt + ph + 4, lw + 4, 14), Qt.AlignCenter, label
+                QRectF(px - lw / 2, mt + ph + 4, lw + 4, 14),
+                Qt.AlignmentFlag.AlignCenter,
+                label,
             )
 
         p.end()
@@ -194,8 +200,8 @@ class IRFResultDialog(QDialog):
         super().__init__(parent)
         self.setWindowTitle(_tr("IRF Analysis"))
         self.setMinimumSize(860, 560)
-        self.setAttribute(Qt.WA_DeleteOnClose)
-        self.setWindowFlags(self.windowFlags() | Qt.Window)
+        self.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose)
+        self.setWindowFlags(self.windowFlags() | Qt.WindowType.Window)
 
         root = QVBoxLayout(self)
         root.setContentsMargins(12, 12, 12, 12)
@@ -267,10 +273,10 @@ class IRFResultDialog(QDialog):
         for col, (label_text, value_text) in enumerate(metrics):
             lbl = QLabel(label_text)
             lbl.setStyleSheet(header_style)
-            lbl.setAlignment(Qt.AlignCenter)
+            lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
             val = QLabel(value_text)
             val.setStyleSheet(value_style)
-            val.setAlignment(Qt.AlignCenter)
+            val.setAlignment(Qt.AlignmentFlag.AlignCenter)
             grid.addWidget(lbl, 0, col)
             grid.addWidget(val, 1, col)
 

@@ -34,7 +34,6 @@ dist/
 
 # Documentation
 *.md
-README.txt
 
 # Scripts not needed in container
 run_tests.sh

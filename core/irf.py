@@ -59,7 +59,7 @@ def map_point_to_pixel(layer: QgsRasterLayer, map_point) -> tuple[int, int] | No
         QgsMessageLog.logMessage(
             f"IRF: coordinate transform failed: {e}",
             "ICEYE Toolbox",
-            Qgis.Warning,
+            Qgis.MessageLevel.Warning,
         )
         return None
     finally:
@@ -145,7 +145,7 @@ def read_slc_chip(
         QgsMessageLog.logMessage(
             f"IRF: chip read failed: {e}",
             "ICEYE Toolbox",
-            Qgis.Warning,
+            Qgis.MessageLevel.Warning,
         )
         return None
     finally:

@@ -4,8 +4,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from PyQt5 import uic
-from PyQt5.QtWidgets import QFileDialog
+from qgis.PyQt import uic
+from qgis.PyQt.QtWidgets import QFileDialog
 
 WIDGET, BASE = uic.loadUiType(
     str(Path(__file__).resolve().parent.parent / "ui" / "export_dialog.ui")

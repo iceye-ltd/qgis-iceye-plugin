@@ -24,7 +24,7 @@ from qgis.core import (
     QgsVectorLayer,
 )
 from qgis.PyQt import uic
-from qgis.PyQt.QtCore import QByteArray, QStandardPaths, Qt, QVariant
+from qgis.PyQt.QtCore import QByteArray, QMetaType, QStandardPaths, Qt
 from qgis.PyQt.QtGui import QColor
 from qgis.PyQt.QtWidgets import QAbstractItemView, QTreeWidgetItem
 
@@ -39,7 +39,7 @@ class StacCatalogTask(QgsTask):
     """Background task to fetch STAC catalog."""
 
     def __init__(self, widget, catalog_url: str, force_refresh: bool) -> None:
-        super().__init__("Load STAC catalog", QgsTask.CanCancel)
+        super().__init__("Load STAC catalog", QgsTask.Flag.CanCancel)
         self.widget = widget
         self.catalog_url = catalog_url
         self.force_refresh = force_refresh
@@ -67,7 +67,7 @@ class StacItemsGeoJsonTask(QgsTask):
     """Background task to fetch STAC items by href."""
 
     def __init__(self, widget, item_hrefs: list[str]) -> None:
-        super().__init__("Load STAC items", QgsTask.CanCancel)
+        super().__init__("Load STAC items", QgsTask.Flag.CanCancel)
         self.widget = widget
         self.item_hrefs = item_hrefs
         self.items = []
@@ -113,7 +113,7 @@ class StacSlcSingleDownloadTask(QgsTask):
         item_id: str,
         parent_results: list,
     ) -> None:
-        super().__init__(f"Download SLC {item_id}", QgsTask.CanCancel)
+        super().__init__(f"Download SLC {item_id}", QgsTask.Flag.CanCancel)
         self.url = url
         self.path = path
         self.item_id = item_id
@@ -187,7 +187,7 @@ class StacSlcBatchTask(QgsTask):
         download_items: list[tuple[str, str, str]],
         error_results: list[dict],
     ) -> None:
-        super().__init__("Load SLC assets", QgsTask.CanCancel)
+        super().__init__("Load SLC assets", QgsTask.Flag.CanCancel)
         self.widget = widget
         self.download_items = download_items
         self.error_results = error_results
@@ -200,7 +200,9 @@ class StacSlcBatchTask(QgsTask):
                 item_id=item_id,
                 parent_results=self.results,
             )
-            self.addSubTask(subtask, [], QgsTask.ParentDependsOnSubTask)
+            self.addSubTask(
+                subtask, [], QgsTask.SubTaskDependency.ParentDependsOnSubTask
+            )
 
     def run(self) -> bool:
         """No work here – all done in subtasks."""
@@ -217,7 +219,7 @@ class StacItemsQlkTask(QgsTask):
     """Background task to download QLK (Quick Look) assets from STAC items."""
 
     def __init__(self, widget, items: list[dict], cache_dir: str) -> None:
-        super().__init__("Load QLK assets", QgsTask.CanCancel)
+        super().__init__("Load QLK assets", QgsTask.Flag.CanCancel)
         self.widget = widget
         self.items = items
         self.cache_dir = cache_dir
@@ -356,7 +358,9 @@ class StacCatalogWidget(BASE, WIDGET):
         self.loadSlcButton.clicked.connect(self.load_selected_slc)
         self.filterLineEdit.textChanged.connect(self.apply_filter)
 
-        self.catalogTree.setSelectionMode(QAbstractItemView.ExtendedSelection)
+        self.catalogTree.setSelectionMode(
+            QAbstractItemView.SelectionMode.ExtendedSelection
+        )
         self.refresh_catalog()
 
     def refresh_catalog(self, force_refresh: bool = False) -> None:
@@ -382,7 +386,7 @@ class StacCatalogWidget(BASE, WIDGET):
         for item in self.catalogTree.selectedItems():
             if item.parent() is None:
                 continue
-            href = item.data(0, Qt.UserRole)
+            href = item.data(0, Qt.ItemDataRole.UserRole)
             if href:
                 item_hrefs.append(href)
 
@@ -406,7 +410,7 @@ class StacCatalogWidget(BASE, WIDGET):
         for item in self.catalogTree.selectedItems():
             if item.parent() is None:
                 continue
-            href = item.data(0, Qt.UserRole)
+            href = item.data(0, Qt.ItemDataRole.UserRole)
             if href:
                 item_hrefs.append(href)
 
@@ -479,20 +483,22 @@ class StacCatalogWidget(BASE, WIDGET):
         if not success:
             message = error or "Failed to load STAC catalog."
             self.statusLabel.setText(message)
-            QgsMessageLog.logMessage(message, "ICEYE Toolbox", level=Qgis.Warning)
+            QgsMessageLog.logMessage(
+                message, "ICEYE Toolbox", level=Qgis.MessageLevel.Warning
+            )
             return
 
         self.catalogTree.clear()
         for collection in collections:
             collection_label = collection.get("title") or collection.get("id") or "N/A"
             collection_item = QTreeWidgetItem([collection_label])
-            collection_item.setData(0, Qt.UserRole, collection.get("href"))
+            collection_item.setData(0, Qt.ItemDataRole.UserRole, collection.get("href"))
             self.catalogTree.addTopLevelItem(collection_item)
 
             for item in collection.get("items", []):
                 item_label = item.get("id") or "N/A"
                 item_node = QTreeWidgetItem([item_label])
-                item_node.setData(0, Qt.UserRole, item.get("href"))
+                item_node.setData(0, Qt.ItemDataRole.UserRole, item.get("href"))
                 collection_item.addChild(item_node)
 
         self.catalogTree.expandAll()
@@ -507,7 +513,9 @@ class StacCatalogWidget(BASE, WIDGET):
             self.loadGeojsonButton.setEnabled(True)
             message = error or "Failed to load selected items."
             self.statusLabel.setText(message)
-            QgsMessageLog.logMessage(message, "ICEYE Toolbox", level=Qgis.Warning)
+            QgsMessageLog.logMessage(
+                message, "ICEYE Toolbox", level=Qgis.MessageLevel.Warning
+            )
             return
 
         qlk_items = []
@@ -542,7 +550,9 @@ class StacCatalogWidget(BASE, WIDGET):
         if not success:
             message = error or "Failed to load SLC assets."
             self.statusLabel.setText(message)
-            QgsMessageLog.logMessage(message, "ICEYE Toolbox", level=Qgis.Warning)
+            QgsMessageLog.logMessage(
+                message, "ICEYE Toolbox", level=Qgis.MessageLevel.Warning
+            )
             return
 
         loaded = 0
@@ -554,7 +564,7 @@ class StacCatalogWidget(BASE, WIDGET):
                 QgsMessageLog.logMessage(
                     f"SLC load failed for {item_id}: {error_text}",
                     "ICEYE Toolbox",
-                    level=Qgis.Warning,
+                    level=Qgis.MessageLevel.Warning,
                 )
                 continue
             if not path:
@@ -564,7 +574,7 @@ class StacCatalogWidget(BASE, WIDGET):
                 QgsMessageLog.logMessage(
                     f"SLC layer invalid for {item_id}.",
                     "ICEYE Toolbox",
-                    level=Qgis.Warning,
+                    level=Qgis.MessageLevel.Warning,
                 )
                 continue
             QgsProject.instance().addMapLayer(layer)
@@ -580,7 +590,9 @@ class StacCatalogWidget(BASE, WIDGET):
         if not success:
             message = error or "Failed to load QLK assets."
             self.statusLabel.setText(message)
-            QgsMessageLog.logMessage(message, "ICEYE Toolbox", level=Qgis.Warning)
+            QgsMessageLog.logMessage(
+                message, "ICEYE Toolbox", level=Qgis.MessageLevel.Warning
+            )
             return
 
         loaded = 0
@@ -592,7 +604,7 @@ class StacCatalogWidget(BASE, WIDGET):
                 QgsMessageLog.logMessage(
                     f"QLK load failed for {item_id}: {error_text}",
                     "ICEYE Toolbox",
-                    level=Qgis.Warning,
+                    level=Qgis.MessageLevel.Warning,
                 )
                 continue
             if not path:
@@ -603,7 +615,7 @@ class StacCatalogWidget(BASE, WIDGET):
                 QgsMessageLog.logMessage(
                     f"QLK layer invalid for {item_id}.",
                     "ICEYE Toolbox",
-                    level=Qgis.Warning,
+                    level=Qgis.MessageLevel.Warning,
                 )
                 continue
             QgsProject.instance().addMapLayer(layer)
@@ -643,7 +655,7 @@ class StacCatalogWidget(BASE, WIDGET):
             QgsMessageLog.logMessage(
                 f"Item {item.get('id')} has no geometry.",
                 "ICEYE Toolbox",
-                level=Qgis.Warning,
+                level=Qgis.MessageLevel.Warning,
             )
             return False
 
@@ -654,16 +666,16 @@ class StacCatalogWidget(BASE, WIDGET):
             QgsMessageLog.logMessage(
                 f"Failed to create layer for {layer_name}.",
                 "ICEYE Toolbox",
-                level=Qgis.Warning,
+                level=Qgis.MessageLevel.Warning,
             )
             return False
 
         self._apply_layer_style(layer)
 
         fields = QgsFields()
-        fields.append(QgsField("id", QVariant.String))
-        fields.append(QgsField("collection", QVariant.String))
-        fields.append(QgsField("datetime", QVariant.String))
+        fields.append(QgsField("id", QMetaType.Type.QString))
+        fields.append(QgsField("collection", QMetaType.Type.QString))
+        fields.append(QgsField("datetime", QMetaType.Type.QString))
         layer.dataProvider().addAttributes(fields)
         layer.updateFields()
 
@@ -678,7 +690,7 @@ class StacCatalogWidget(BASE, WIDGET):
             QgsMessageLog.logMessage(
                 f"Failed to parse geometry for {layer_name}.",
                 "ICEYE Toolbox",
-                level=Qgis.Warning,
+                level=Qgis.MessageLevel.Warning,
             )
             return False
         feature.setGeometry(qgs_geometry)
@@ -745,13 +757,17 @@ class StacCatalogWidget(BASE, WIDGET):
         layer.renderer().setSymbol(symbol)
 
     def _slc_cache_dir(self) -> Path:
-        base = QStandardPaths.writableLocation(QStandardPaths.AppLocalDataLocation)
+        base = QStandardPaths.writableLocation(
+            QStandardPaths.StandardLocation.AppLocalDataLocation
+        )
         if not base:
             base = Path("~/.local/share/QGIS").expanduser()
         return Path(base) / "iceye_toolbox" / "slc_cache"
 
     def _qlk_cache_dir(self) -> Path:
-        base = QStandardPaths.writableLocation(QStandardPaths.AppLocalDataLocation)
+        base = QStandardPaths.writableLocation(
+            QStandardPaths.StandardLocation.AppLocalDataLocation
+        )
         if not base:
             base = Path("~/.local/share/QGIS").expanduser()
         return Path(base) / "iceye_toolbox" / "qlk_cache"
