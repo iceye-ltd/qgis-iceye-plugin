@@ -73,14 +73,16 @@ class ColorTool:
         layer = self.iface.activeLayer()
         if not layer:
             self.iface.messageBar().pushMessage(
-                "No TIF layer found", level=Qgis.Warning, duration=3
+                "No TIF layer found", level=Qgis.MessageLevel.Warning, duration=3
             )
             return
 
         crop_task = CropLayerTask(layer, extent)
         self.task = ColorTask(self.iface, self.metadata_provider, crop_task, color_mode)
 
-        self.task.addSubTask(crop_task, [], QgsTask.ParentDependsOnSubTask)
+        self.task.addSubTask(
+            crop_task, [], QgsTask.SubTaskDependency.ParentDependsOnSubTask
+        )
         QgsApplication.taskManager().addTask(self.task)
 
     def _color_task_running(self) -> bool:
@@ -88,7 +90,10 @@ class ColorTool:
         if self.task is None:
             return False
         try:
-            return self.task.status() not in (QgsTask.Complete, QgsTask.Terminated)
+            return self.task.status() not in (
+                QgsTask.TaskStatus.Complete,
+                QgsTask.TaskStatus.Terminated,
+            )
         except RuntimeError:
             self.task = None
             return False
@@ -123,14 +128,16 @@ class ColorTool:
             crop_task,
             self._batch_color_mode,
         )
-        self.task.addSubTask(crop_task, [], QgsTask.ParentDependsOnSubTask)
+        self.task.addSubTask(
+            crop_task, [], QgsTask.SubTaskDependency.ParentDependsOnSubTask
+        )
         return BatchStepResult(task=self.task)
 
     def _after_batch_color_step(self) -> None:
         QgsMessageLog.logMessage(
             f"Batch color: completed step {self._batch_runner.step_index}/{self._batch_runner.total}",
             "ICEYE Toolbox",
-            Qgis.Info,
+            Qgis.MessageLevel.Info,
         )
 
 
@@ -140,7 +147,7 @@ class ColorTask(QgsTask):
     def __init__(
         self, iface, metadata_provider, crop_task, color_mode: str = "range_cmap"
     ):
-        super().__init__("Creating color image", QgsTask.CanCancel)
+        super().__init__("Creating color image", QgsTask.Flag.CanCancel)
         self.iface = iface
         self.crop_task = crop_task
         self.metadata_provider = metadata_provider
@@ -152,7 +159,7 @@ class ColorTask(QgsTask):
         QgsMessageLog.logMessage(
             f"Running for {self.crop_task.result_layer.name()}",
             "ICEYE Toolbox",
-            Qgis.Info,
+            Qgis.MessageLevel.Info,
         )
         metadata = self.metadata_provider.get(self.crop_task.result_layer)
         data, _ = read_slc_layer(
@@ -169,7 +176,7 @@ class ColorTask(QgsTask):
             QgsMessageLog.logMessage(
                 f"Error in color image creation: {e!s}",
                 "ICEYE Toolbox",
-                Qgis.Critical,
+                Qgis.MessageLevel.Critical,
             )
             return False
 
@@ -182,7 +189,7 @@ class ColorTask(QgsTask):
             QgsMessageLog.logMessage(
                 f"Failed to create color layer: {error}",
                 "ICEYE Toolbox",
-                Qgis.Critical,
+                Qgis.MessageLevel.Critical,
             )
             return False
 
@@ -196,7 +203,7 @@ class ColorTask(QgsTask):
         QgsMessageLog.logMessage(
             "Finished color task",
             "ICEYE Toolbox",
-            Qgis.Info,
+            Qgis.MessageLevel.Info,
         )
         QgsProject.instance().removeMapLayer(self.crop_task.result_layer)
         self.crop_task.result_layer = None
@@ -204,7 +211,9 @@ class ColorTask(QgsTask):
 
         if not result:
             self.iface.messageBar().pushMessage(
-                "Failed to create color image", level=Qgis.Critical, duration=3
+                "Failed to create color image",
+                level=Qgis.MessageLevel.Critical,
+                duration=3,
             )
 
             return
@@ -342,7 +351,7 @@ def create_color_raster_layer(
         QgsMessageLog.logMessage(
             f"Getting metadata from source layer {source_layer.name()}",
             "ICEYE Toolbox",
-            Qgis.Info,
+            Qgis.MessageLevel.Info,
         )
         try:
             properties = src_ds.GetMetadata()
@@ -380,7 +389,7 @@ def create_color_raster_layer(
         QgsMessageLog.logMessage(
             f"Built overviews for: {output_path}",
             "ICEYE Toolbox",
-            Qgis.Info,
+            Qgis.MessageLevel.Info,
         )
     except Exception:
         return False, None, "Failed to build overviews"

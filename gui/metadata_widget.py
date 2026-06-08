@@ -65,5 +65,5 @@ class MetadataWidget(BASE, WIDGET):
                     QgsMessageLog.logMessage(
                         f"Could not load metadata for layer {layer.name()}",
                         "ICEYE Toolbox",
-                        level=Qgis.Warning,
+                        level=Qgis.MessageLevel.Warning,
                     )

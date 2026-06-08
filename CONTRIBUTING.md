@@ -12,7 +12,7 @@ These are mostly guidelines, not rules. Use your best judgment, and feel free to
    cd iceye-qgis-plugins
    ```
 
-2. **Prerequisites**: QGIS 3.44 or later
+2. **Prerequisites**: QGIS 3.44 or QGIS 4.0+
 
 3. Install from source (development-friendly): The install scripts create a link from your local QGIS plugins directory to `iceye_toolbox` in this repository so you can modify the code directly.
 
@@ -158,16 +158,31 @@ ruff check --fix .
 
 ### Tests
 
-Build the Docker image for testing:
+Tests run in Docker via the [Makefile](Makefile) (requires Docker).
+
+Raster fixtures under `test/fixtures/` are stored with Git LFS. After cloning, run `git lfs pull` if layer-load tests fail locally or in CI checkout.
+
+Default (QGIS 3.44):
 
 ```bash
-docker build -t qgis-test .
+make test
 ```
 
-Run tests:
+QGIS 4.0:
 
 ```bash
-./run_tests.sh
+make test QGIS_VERSION=4.0-trixie
+```
+
+Build the image without running tests (QGIS 3.44):
+
+```bash
+make docker-build
+```
+For QGIS 4.0.+, pass the image tag:
+
+```bash
+make docker-build QGIS_VERSION=4.0-trixie
 ```
 
 **Headless processing (video / color / focus)** on a GeoTIFF, optionally with a KML ROI, uses the same Docker image and `PYTHONPATH` as tests:

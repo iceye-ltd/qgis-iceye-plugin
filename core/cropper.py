@@ -7,7 +7,6 @@ import math
 
 import numpy as np
 from osgeo import gdal
-from PyQt5.QtGui import QColor
 from qgis import processing
 from qgis.core import (
     Qgis,
@@ -23,6 +22,7 @@ from qgis.core import (
     QgsVectorLayer,
 )
 from qgis.gui import QgsMapToolExtent
+from qgis.PyQt.QtGui import QColor
 
 from .batch_runner import BatchExtentRunner, BatchStepResult
 
@@ -67,14 +67,17 @@ class CropTool:
         layer = self.iface.activeLayer()
         if not layer:
             self.iface.messageBar().pushMessage(
-                "Warning", "No TIF layer found", level=Qgis.Warning, duration=3
+                "Warning",
+                "No TIF layer found",
+                level=Qgis.MessageLevel.Warning,
+                duration=3,
             )
             return
 
         QgsMessageLog.logMessage(
             f"Cropping layer: {layer.name()} with extent: {extent.toString()}",
             "ICEYE Toolbox",
-            Qgis.Info,
+            Qgis.MessageLevel.Info,
         )
 
         self.task = CropLayerTask(layer, extent)
@@ -89,7 +92,10 @@ class CropTool:
         if self.task is None:
             return False
         try:
-            return self.task.status() not in (QgsTask.Complete, QgsTask.Terminated)
+            return self.task.status() not in (
+                QgsTask.TaskStatus.Complete,
+                QgsTask.TaskStatus.Terminated,
+            )
         except RuntimeError:
             self.task = None
             return False
@@ -128,7 +134,7 @@ class CropTool:
         QgsMessageLog.logMessage(
             f"Batch crop: completed step {self._batch_runner.step_index}/{self._batch_runner.total}",
             "ICEYE Toolbox",
-            Qgis.Info,
+            Qgis.MessageLevel.Info,
         )
 
 
@@ -136,7 +142,7 @@ class CropLayerTask(QgsTask):
     """Task to clipping raster from a mask."""
 
     def __init__(self, layer: QgsRasterLayer, extent: QgsRectangle):
-        super().__init__("Clipping raster layer", QgsTask.CanCancel)
+        super().__init__("Clipping raster layer", QgsTask.Flag.CanCancel)
         self.layer = layer
         self.extent = extent
         self.extend_image_coords = None
@@ -152,21 +158,21 @@ class CropLayerTask(QgsTask):
         QgsMessageLog.logMessage(
             f"Running crop layer task for layer: {self.layer.name()} with extent: {self.extent.toString()}",
             "ICEYE Toolbox",
-            Qgis.Info,
+            Qgis.MessageLevel.Info,
         )
 
         self.extend_image_coords = get_extend_image_coords(self.layer, self.extent)
         QgsMessageLog.logMessage(
             f"Extend image coords: {self.extend_image_coords.toString()}",
             "ICEYE Toolbox",
-            Qgis.Info,
+            Qgis.MessageLevel.Info,
         )
         if not self.extend_image_coords:
             self.error_msg = "Failed to get extend image coords"
             QgsMessageLog.logMessage(
                 "Failed to get extend image coords",
                 "ICEYE Toolbox",
-                Qgis.Critical,
+                Qgis.MessageLevel.Critical,
             )
             return False
 
@@ -197,7 +203,7 @@ class CropLayerTask(QgsTask):
             QgsMessageLog.logMessage(
                 f"Error in clipping layer: {str(e)}",
                 "ICEYE Toolbox",
-                Qgis.Critical,
+                Qgis.MessageLevel.Critical,
             )
             return False
 
@@ -220,12 +226,12 @@ class CropLayerTask(QgsTask):
             QgsMessageLog.logMessage(
                 f"Error in building overviews: {str(e)}",
                 "ICEYE Toolbox",
-                Qgis.Critical,
+                Qgis.MessageLevel.Critical,
             )
         QgsMessageLog.logMessage(
             f"{overview_params}",
             "ICEYE Toolbox",
-            Qgis.Info,
+            Qgis.MessageLevel.Info,
         )
 
         # Copy full metadata
@@ -236,7 +242,7 @@ class CropLayerTask(QgsTask):
                 QgsMessageLog.logMessage(
                     f"Failed to open input dataset {self.layer.name()}",
                     "ICEYE Toolbox",
-                    Qgis.Critical,
+                    Qgis.MessageLevel.Critical,
                 )
                 self.error_msg = f"Failed to open input dataset {self.layer.name()}"
                 return False
@@ -244,7 +250,7 @@ class CropLayerTask(QgsTask):
             QgsMessageLog.logMessage(
                 f"Error in opening input dataset: {str(e)}",
                 "ICEYE Toolbox",
-                Qgis.Critical,
+                Qgis.MessageLevel.Critical,
             )
             self.error_msg = f"Error in opening input dataset: {str(e)}"
             return False
@@ -255,7 +261,7 @@ class CropLayerTask(QgsTask):
                 QgsMessageLog.logMessage(
                     f"Failed to open output dataset {self.result_path}",
                     "ICEYE Toolbox",
-                    Qgis.Critical,
+                    Qgis.MessageLevel.Critical,
                 )
                 self.error_msg = f"Failed to open output dataset {self.result_path}"
                 return False
@@ -263,7 +269,7 @@ class CropLayerTask(QgsTask):
             QgsMessageLog.logMessage(
                 f"Error in opening output dataset: {str(e)}",
                 "ICEYE Toolbox",
-                Qgis.Critical,
+                Qgis.MessageLevel.Critical,
             )
             self.error_msg = f"Error in opening output dataset: {str(e)}"
             return False
@@ -274,7 +280,7 @@ class CropLayerTask(QgsTask):
                 QgsMessageLog.logMessage(
                     f"Missing ICEYE_PROPERTIES in input dataset {self.layer.name()}",
                     "ICEYE Toolbox",
-                    Qgis.Warning,
+                    Qgis.MessageLevel.Warning,
                 )
                 self.error_msg = "Missing ICEYE_PROPERTIES in input dataset"
                 return False
@@ -285,7 +291,7 @@ class CropLayerTask(QgsTask):
             QgsMessageLog.logMessage(
                 f"Error in setting metadata: {str(e)}",
                 "ICEYE Toolbox",
-                Qgis.Critical,
+                Qgis.MessageLevel.Critical,
             )
             self.error_msg = f"Error in setting metadata: {str(e)}"
             return False
@@ -302,14 +308,14 @@ class CropLayerTask(QgsTask):
         QgsMessageLog.logMessage(
             f"Result path: {self.result_path}",
             "ICEYE Toolbox",
-            Qgis.Info,
+            Qgis.MessageLevel.Info,
         )
 
         if not result or not self.result_path:
             QgsMessageLog.logMessage(
                 f"Clipping failed: {self.error_msg}",
                 "ICEYE Toolbox",
-                Qgis.Critical,
+                Qgis.MessageLevel.Critical,
             )
             return
 
@@ -327,7 +333,7 @@ class CropLayerTask(QgsTask):
             QgsMessageLog.logMessage(
                 f"Generated clipped layer from {self.result_path} is not valid",
                 "ICEYE Toolbox",
-                Qgis.Critical,
+                Qgis.MessageLevel.Critical,
             )
             return
         self.result_layer = raster
@@ -335,7 +341,7 @@ class CropLayerTask(QgsTask):
         QgsMessageLog.logMessage(
             f"Adding raster to project: {raster.name()}",
             "ICEYE Toolbox",
-            Qgis.Info,
+            Qgis.MessageLevel.Info,
         )
         QgsProject.instance().addMapLayer(raster, True)
 
@@ -470,7 +476,7 @@ def get_extend_image_coords(
         QgsMessageLog.logMessage(
             f"Failed to compute extent {e}",
             "ICEYE Toolbox",
-            Qgis.Critical,
+            Qgis.MessageLevel.Critical,
         )
     finally:
         dataset = None
@@ -507,7 +513,7 @@ def check_and_grow_pixel_extent(
     QgsMessageLog.logMessage(
         f"Extent pixel dimensions - Width: {width_pixels}, Height: {height_pixels}",
         "ICEYE Toolbox",
-        Qgis.Info,
+        Qgis.MessageLevel.Info,
     )
 
     # If extent is large enough, return unchanged
@@ -531,7 +537,7 @@ def check_and_grow_pixel_extent(
         f"Extent was too small, growing from ({width_pixels}x{height_pixels}) to "
         f"({grown_pixel_extent.width()}x{grown_pixel_extent.height()}) pixels",
         "ICEYE Toolbox",
-        Qgis.Info,
+        Qgis.MessageLevel.Info,
     )
 
     return grown_pixel_extent, True

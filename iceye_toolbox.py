@@ -359,12 +359,16 @@ class IceyeToolbox:
     def run(self) -> None:
         """Load and start the plugin (add dock widgets)."""
         # Metadata widget
-        self.iface.addDockWidget(Qt.RightDockWidgetArea, self.metadata_widget)
+        self.iface.addDockWidget(
+            Qt.DockWidgetArea.RightDockWidgetArea, self.metadata_widget
+        )
         self.metadata_widget.show()
         self.metadata_widget.closeEvent = self.onClosePlugin
 
         # STAC catalog widget
-        self.iface.addDockWidget(Qt.RightDockWidgetArea, self.stac_catalog_widget)
+        self.iface.addDockWidget(
+            Qt.DockWidgetArea.RightDockWidgetArea, self.stac_catalog_widget
+        )
         if self.stac_catalog_action and self.stac_catalog_action.isChecked():
             self.stac_catalog_widget.show()
         else:

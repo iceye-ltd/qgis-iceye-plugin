@@ -180,7 +180,7 @@ class LensOverlayItem(QGraphicsItemGroup):
         pen = QPen(QColor("white"))
         pen.setWidth(1)
         self._border_item.setPen(pen)
-        self._border_item.setBrush(QBrush(Qt.NoBrush))
+        self._border_item.setBrush(QBrush(Qt.BrushStyle.NoBrush))
         self.addToGroup(self._border_item)
 
         self.setZValue(10000)
@@ -273,13 +273,13 @@ def _to_scaled_grayscale(data: NDArray[np.uint8], overlay_size: int) -> QImage |
         cols,
         rows,
         cols,
-        QImage.Format_Grayscale8,
+        QImage.Format.Format_Grayscale8,
     ).copy()
     return image.scaled(
         overlay_size,
         overlay_size,
-        Qt.IgnoreAspectRatio,
-        Qt.SmoothTransformation,
+        Qt.AspectRatioMode.IgnoreAspectRatio,
+        Qt.TransformationMode.SmoothTransformation,
     )
 
 
@@ -342,7 +342,7 @@ def read_slc_data(
         )
     except Exception as e:
         QgsMessageLog.logMessage(
-            f"Failed to read SLC data: {e}", "ICEYE Toolbox", Qgis.Warning
+            f"Failed to read SLC data: {e}", "ICEYE Toolbox", Qgis.MessageLevel.Warning
         )
         return None
 
@@ -405,7 +405,7 @@ def render_layers_to_image(
     map_settings.setOutputSize(QSize(overlay_size, overlay_size))
     map_settings.setExtent(extent)
     map_settings.setBackgroundColor(QColor(0, 0, 0, 0))
-    map_settings.setFlag(QgsMapSettings.Antialiasing, True)
+    map_settings.setFlag(QgsMapSettings.Flag.Antialiasing, True)
 
     job = QgsMapRendererParallelJob(map_settings)
     job.start()
@@ -1406,24 +1406,30 @@ class LensMapTool(QgsMapToolPan):
             self._overlay = LensOverlayItem(self.overlay_size)
             self.canvas.scene().addItem(self._overlay)
         if self._extent_band is None:
-            self._extent_band = QgsRubberBand(self.canvas, QgsWkbTypes.PolygonGeometry)
+            self._extent_band = QgsRubberBand(
+                self.canvas, QgsWkbTypes.GeometryType.PolygonGeometry
+            )
             self._extent_band.setColor(QColor(255, 255, 255, 200))
             self._extent_band.setFillColor(QColor(0, 0, 0, 0))
             self._extent_band.setWidth(1)
-            self._extent_band.setLineStyle(Qt.DashLine)
+            self._extent_band.setLineStyle(Qt.PenStyle.DashLine)
             self._extent_band.setZValue(9999)
         self._overlay.show()
         if self._extent_band is not None:
             self._extent_band.show()
         self._update_kpa_controls_visibility()
-        self.canvas.setCursor(Qt.CrossCursor)
+        self.canvas.setCursor(Qt.CursorShape.CrossCursor)
 
         self._shortcut_scroll_fwd = QShortcut(QKeySequence("Shift+Up"), self.canvas)
-        self._shortcut_scroll_fwd.setContext(Qt.WidgetWithChildrenShortcut)
+        self._shortcut_scroll_fwd.setContext(
+            Qt.ShortcutContext.WidgetWithChildrenShortcut
+        )
         self._shortcut_scroll_fwd.activated.connect(self._scroll_forward)
 
         self._shortcut_scroll_bwd = QShortcut(QKeySequence("Shift+Down"), self.canvas)
-        self._shortcut_scroll_bwd.setContext(Qt.WidgetWithChildrenShortcut)
+        self._shortcut_scroll_bwd.setContext(
+            Qt.ShortcutContext.WidgetWithChildrenShortcut
+        )
         self._shortcut_scroll_bwd.activated.connect(self._scroll_backward)
 
     def deactivate(self) -> None:
@@ -1443,7 +1449,7 @@ class LensMapTool(QgsMapToolPan):
             self.canvas.scene().removeItem(self._overlay)
             self._overlay = None
         if self._extent_band is not None:
-            self._extent_band.reset(QgsWkbTypes.PolygonGeometry)
+            self._extent_band.reset(QgsWkbTypes.GeometryType.PolygonGeometry)
             self._extent_band.hide()
             self._extent_band = None
 
@@ -1462,7 +1468,7 @@ class LensMapTool(QgsMapToolPan):
         if self._pinned:
             return
         self._last_map_point = event.mapPoint()
-        self._last_pos = event.pos()
+        self._last_pos = event.pixelPoint()
         self._recompute_extent()
         self._update_position(self._last_pos)
         self._update_extent_band()
@@ -1470,15 +1476,15 @@ class LensMapTool(QgsMapToolPan):
 
     def canvasPressEvent(self, event):
         """Handle canvas mouse press."""
-        self._press_pos = event.pos()
+        self._press_pos = event.pixelPoint()
         super().canvasPressEvent(event)
 
     def canvasReleaseEvent(self, event):
         """Handle canvas mouse release."""
         super().canvasReleaseEvent(event)
-        if event.button() != Qt.LeftButton or self._press_pos is None:
+        if event.button() != Qt.MouseButton.LeftButton or self._press_pos is None:
             return
-        moved = (event.pos() - self._press_pos).manhattanLength()
+        moved = (event.pixelPoint() - self._press_pos).manhattanLength()
         self._press_pos = None
         if moved > 3:
             return
@@ -1487,7 +1493,7 @@ class LensMapTool(QgsMapToolPan):
             self._pinned_pos = None
             self._pinned_map_point = None
             self._last_map_point = event.mapPoint()
-            self._last_pos = event.pos()
+            self._last_pos = event.pixelPoint()
             self._recompute_extent()
             self._update_position(self._last_pos)
             self._update_extent_band()
@@ -1524,9 +1530,9 @@ class LensMapTool(QgsMapToolPan):
     def keyPressEvent(self, event):
         """Handle key press for extent wheel (+/-)."""
         key = event.key()
-        if key in (Qt.Key_Plus, Qt.Key_Equal):
+        if key in (Qt.Key.Key_Plus, Qt.Key.Key_Equal):
             delta = 120
-        elif key == Qt.Key_Minus:
+        elif key == Qt.Key.Key_Minus:
             delta = -120
         else:
             super().keyPressEvent(event)
@@ -1789,7 +1795,9 @@ class LensToolbarAction:
         self._spectrum_dropdown_btn.setText(_tr("Lens Render: 2D Spectrum"))
         self._spectrum_dropdown_btn.setToolTip(_tr("Spectrum mode"))
         self._spectrum_dropdown_btn.setCheckable(True)
-        self._spectrum_dropdown_btn.setPopupMode(QToolButton.MenuButtonPopup)
+        self._spectrum_dropdown_btn.setPopupMode(
+            QToolButton.ToolButtonPopupMode.MenuButtonPopup
+        )
         self._spectrum_dropdown_btn.setMenu(spectrum_menu)
         self._spectrum_dropdown_btn.clicked.connect(
             lambda: self._set_lens_render_mode(self._current_spectrum_mode)
@@ -1841,7 +1849,9 @@ class LensToolbarAction:
         self._viewer_dropdown_btn.setText(_tr("Lens Render: Azimuth Viewer"))
         self._viewer_dropdown_btn.setToolTip(_tr("Sub-aperture viewer mode"))
         self._viewer_dropdown_btn.setCheckable(True)
-        self._viewer_dropdown_btn.setPopupMode(QToolButton.MenuButtonPopup)
+        self._viewer_dropdown_btn.setPopupMode(
+            QToolButton.ToolButtonPopupMode.MenuButtonPopup
+        )
         self._viewer_dropdown_btn.setMenu(viewer_menu)
         self._viewer_dropdown_btn.clicked.connect(
             lambda: self._set_lens_render_mode(self._current_viewer_mode)

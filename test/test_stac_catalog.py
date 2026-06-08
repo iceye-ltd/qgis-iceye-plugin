@@ -397,9 +397,9 @@ class TestLoadSelectedSlc:
 
         parent = QTreeWidgetItem(["Collection"])
         child1 = QTreeWidgetItem(["ICEYE_SLC_1"])
-        child1.setData(0, Qt.UserRole, "https://example.com/item1.json")
+        child1.setData(0, Qt.ItemDataRole.UserRole, "https://example.com/item1.json")
         child2 = QTreeWidgetItem(["ICEYE_SLC_2"])
-        child2.setData(0, Qt.UserRole, "https://example.com/item2.json")
+        child2.setData(0, Qt.ItemDataRole.UserRole, "https://example.com/item2.json")
         parent.addChild(child1)
         parent.addChild(child2)
         stac_widget.catalogTree.addTopLevelItem(parent)
@@ -438,7 +438,7 @@ class TestLoadSelectedSlc:
 
         parent = QTreeWidgetItem(["Collection"])
         child = QTreeWidgetItem(["ICEYE_NO_SLC"])
-        child.setData(0, Qt.UserRole, "https://example.com/item.json")
+        child.setData(0, Qt.ItemDataRole.UserRole, "https://example.com/item.json")
         parent.addChild(child)
         stac_widget.catalogTree.addTopLevelItem(parent)
         child.setSelected(True)

@@ -104,7 +104,7 @@ def read_slc_layer(
             QgsMessageLog.logMessage(
                 f"Found amplitude mapping: function: {function}, scale: {scale}, exponent: {exponent}",
                 "ICEYE Toolbox",
-                Qgis.Info,
+                Qgis.MessageLevel.Info,
             )
 
             data = (
@@ -117,7 +117,7 @@ def read_slc_layer(
                 QgsMessageLog.logMessage(
                     f"Found amplitude mapping: function: {function}",
                     "ICEYE Toolbox",
-                    Qgis.Info,
+                    Qgis.MessageLevel.Info,
                 )
 
             data = (

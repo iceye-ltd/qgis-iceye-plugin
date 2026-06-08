@@ -198,7 +198,7 @@ class MetadataProvider:
             QgsMessageLog.logMessage(
                 f"Layer {layer.name()} is not a raster layer",
                 "ICEYE Toolbox",
-                level=Qgis.Warning,
+                level=Qgis.MessageLevel.Warning,
             )
             return None
 
@@ -208,7 +208,7 @@ class MetadataProvider:
             QgsMessageLog.logMessage(
                 f"Returning cached metadata for layer {layer_id}",
                 "ICEYE Toolbox",
-                level=Qgis.Info,
+                level=Qgis.MessageLevel.Info,
             )
             return self._cache[layer_id]
 
@@ -216,7 +216,7 @@ class MetadataProvider:
         QgsMessageLog.logMessage(
             f"Loading metadata for layer {layer_id}",
             "ICEYE Toolbox",
-            level=Qgis.Info,
+            level=Qgis.MessageLevel.Info,
         )
         return self.load(layer)
 
@@ -237,7 +237,7 @@ class MetadataProvider:
             QgsMessageLog.logMessage(
                 f"Layer {layer.id()} is not a raster layer",
                 "ICEYE Toolbox",
-                level=Qgis.Critical,
+                level=Qgis.MessageLevel.Critical,
             )
             return None
 
@@ -246,7 +246,7 @@ class MetadataProvider:
             QgsMessageLog.logMessage(
                 f"Layer {layer.id()} is not an ICEYE layer",
                 "ICEYE Toolbox",
-                level=Qgis.Warning,
+                level=Qgis.MessageLevel.Warning,
             )
             return None
 
@@ -255,7 +255,7 @@ class MetadataProvider:
             QgsMessageLog.logMessage(
                 f"Failed to open dataset for layer {layer.id()}",
                 "ICEYE Toolbox",
-                level=Qgis.Critical,
+                level=Qgis.MessageLevel.Critical,
             )
             return None
 
@@ -265,7 +265,7 @@ class MetadataProvider:
             QgsMessageLog.logMessage(
                 "Error decoding ICEYE_PROPERTIES",
                 "ICEYE Toolbox",
-                level=Qgis.Warning,
+                level=Qgis.MessageLevel.Warning,
             )
             return None
         try:
@@ -389,7 +389,7 @@ class MetadataProvider:
             QgsMessageLog.logMessage(
                 f"Error loading metadata for layer {layer.id()}: {e!s}",
                 "ICEYE Toolbox",
-                level=Qgis.Critical,
+                level=Qgis.MessageLevel.Critical,
             )
             return None
 
@@ -418,7 +418,7 @@ def is_iceye_layer(layer: QgsRasterLayer | None) -> bool:
         QgsMessageLog.logMessage(
             f"Layer {layer_id} is not a raster layer",
             "ICEYE Toolbox",
-            level=Qgis.Warning,
+            level=Qgis.MessageLevel.Warning,
         )
         return False
 
