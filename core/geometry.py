@@ -36,9 +36,9 @@ from abc import ABCMeta, abstractmethod
 from dataclasses import dataclass
 
 import numpy as np
-from .typing_compat import NDArray
 
 from ..core.metadata import IceyeMetadata
+from .typing_compat import NDArray
 
 
 @dataclass

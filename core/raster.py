@@ -5,12 +5,12 @@ from __future__ import annotations
 from collections.abc import Iterator
 
 import numpy as np
-from .typing_compat import NDArray
 from osgeo import gdal
 from qgis.core import Qgis, QgsMessageLog, QgsRasterLayer, QgsRectangle
 
 from .cropper import get_extend_image_coords
 from .metadata import IceyeMetadata
+from .typing_compat import NDArray
 
 
 def read_slc_layer(

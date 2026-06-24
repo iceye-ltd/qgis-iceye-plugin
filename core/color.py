@@ -6,7 +6,6 @@ from pathlib import Path
 from typing import Callable
 
 import numpy as np
-from .typing_compat import NDArray
 from osgeo import gdal
 from qgis import processing
 from qgis.core import (
@@ -27,6 +26,7 @@ from .cropper import (
 )
 from .metadata import IceyeMetadata
 from .raster import read_slc_layer
+from .typing_compat import NDArray
 from .video import create_multiband_raster, write_frame_to_band
 
 

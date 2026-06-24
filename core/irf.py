@@ -6,9 +6,10 @@ import math
 from dataclasses import dataclass
 
 import numpy as np
-from .typing_compat import NDArray
 from osgeo import gdal
 from qgis.core import Qgis, QgsMessageLog, QgsRasterLayer
+
+from .typing_compat import NDArray
 
 
 @dataclass
