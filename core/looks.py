@@ -3,7 +3,8 @@
 from __future__ import annotations
 
 import numpy as np
-from numpy.typing import NDArray
+
+from .typing_compat import NDArray
 
 
 def _insert_center(

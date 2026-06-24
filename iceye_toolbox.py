@@ -23,6 +23,8 @@
  ***************************************************************************/
 """
 
+from __future__ import annotations
+
 from pathlib import Path
 
 from qgis.PyQt.QtCore import QCoreApplication, QSettings, Qt, QTranslator
