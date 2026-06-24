@@ -9,7 +9,7 @@ from datetime import datetime
 from typing import Any
 
 import numpy as np
-from numpy.typing import NDArray
+from .typing_compat import NDArray
 from osgeo import gdal
 from qgis.core import Qgis, QgsMessageLog, QgsRasterLayer
 

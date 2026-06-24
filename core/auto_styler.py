@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import numpy as np
-from numpy.typing import NDArray
+from .typing_compat import NDArray
 from qgis.core import (
     Qgis,
     QgsColorRamp,

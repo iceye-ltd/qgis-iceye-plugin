@@ -10,7 +10,7 @@ from pathlib import Path
 from typing import Any, ClassVar
 
 import numpy as np
-from numpy.typing import NDArray
+from ..core.typing_compat import NDArray
 from osgeo import gdal
 from qgis.core import (
     Qgis,
