@@ -197,7 +197,7 @@ class KPAControlsPanel(QFrame):
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
-        self.setFrameShape(QFrame.StyledPanel)
+        self.setFrameShape(QFrame.Shape.StyledPanel)
         self.setAutoFillBackground(True)
         self.setFixedWidth(220)
 
@@ -208,7 +208,7 @@ class KPAControlsPanel(QFrame):
 
         linear_row = QHBoxLayout()
         linear_row.addWidget(QLabel(_tr("L")))
-        self.linear_slider = QSlider(Qt.Horizontal)
+        self.linear_slider = QSlider(Qt.Orientation.Horizontal)
         self.linear_slider.setRange(-1000, 1000)
         self.linear_slider.setValue(0)
         self.linear_slider.setToolTip(_tr("KPA linear phase coefficient (a1)"))
@@ -217,7 +217,7 @@ class KPAControlsPanel(QFrame):
 
         quadratic_row = QHBoxLayout()
         quadratic_row.addWidget(QLabel(_tr("Q")))
-        self.quadratic_slider = QSlider(Qt.Horizontal)
+        self.quadratic_slider = QSlider(Qt.Orientation.Horizontal)
         self.quadratic_slider.setRange(-1000, 1000)
         self.quadratic_slider.setValue(0)
         self.quadratic_slider.setToolTip(_tr("KPA quadratic phase coefficient (a2)"))
