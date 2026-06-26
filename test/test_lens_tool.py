@@ -9,8 +9,11 @@ from iceye_toolbox.core.cropper import get_extend_image_coords
 from iceye_toolbox.core.metadata import MetadataProvider
 from iceye_toolbox.gui.lens_tool import (
     LensMapTool,
+    _apply_kpa_phase_compensation,
+    _kpa_doppler_spectrum,
     _process_color_spectrum,
     _process_focus_data,
+    compute_kpa_after_doppler_spectrum,
     compute_lens_extent,
     create_georeferenced_temp_raster,
     get_pixel_to_geo_corners,
@@ -48,6 +51,29 @@ class TestProcessFocusData:
         assert result.ndim == 2, "Output should be 2D"
         assert result.dtype == np.uint8, "Output should be uint8"
         assert result.size > 0, "Output should not be empty"
+
+
+class TestKpaDopplerSpectrum:
+    """Tests for KPA Doppler spectrum helpers."""
+
+    def test_apply_kpa_phase_preserves_shape(self, complex_data):
+        """KPA phase compensation should preserve array shape."""
+        result = _apply_kpa_phase_compensation(complex_data, a1=1.0, a2=-0.5)
+        assert result.shape == complex_data.shape
+        assert np.iscomplexobj(result)
+
+    def test_after_spectrum_is_2d(self, complex_data):
+        """After-KPA Doppler spectrum should be a 2D log-magnitude array."""
+        after = compute_kpa_after_doppler_spectrum(complex_data, a1=0.0, a2=0.0)
+        assert after.ndim == 2
+        assert after.shape == complex_data.shape
+        assert after.size > 0
+
+    def test_nonzero_coefficients_can_change_spectrum(self, complex_data):
+        """Non-zero KPA coefficients should modify the compensated spectrum."""
+        before = _kpa_doppler_spectrum(complex_data)
+        after = compute_kpa_after_doppler_spectrum(complex_data, a1=2.0, a2=-1.0)
+        assert not np.allclose(before, after)
 
 
 class TestCreateGeoreferencedTempRaster:
