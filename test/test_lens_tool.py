@@ -59,14 +59,17 @@ class TestKpaSliderDivisorPrefixes:
 
     @pytest.mark.parametrize("mode", ["SLF1L", "SLP2L", "SLH3L"])
     def test_multilook_suffixes_use_coarse_divisor(self, metadata, mode):
+        """Multilook SL* modes should use the coarse slider divisor."""
         metadata.iceye_processing_mode = mode
         assert _kpa_slider_divisor(metadata) == 100.0
 
     def test_sledp_matches_fine_before_sled_prefix(self, metadata):
+        """SLEDP should match fine divisor before the shorter SLED prefix."""
         metadata.iceye_processing_mode = "SLEDP"
         assert _kpa_slider_divisor(metadata) == 5.0
 
     def test_unknown_mode_defaults_to_fine_divisor(self, metadata):
+        """Unknown processing modes should default to the fine slider divisor."""
         metadata.iceye_processing_mode = "STRIPMAP"
         assert _kpa_slider_divisor(metadata) == 5.0
 

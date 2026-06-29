@@ -580,7 +580,7 @@ def _kpa_ground_velocity(a1: float, a2: float, metadata: Any) -> float | None:
 def _process_kpa(
     data_patch: NDArray[np.complex64], metadata: Any, a1: float = 0.0, a2: float = 0.0
 ) -> NDArray[np.uint8]:
-    """Apply look extraction + keystone phase algorithm and return display-ready image"""
+    """Apply look extraction + keystone phase algorithm and return display-ready image."""
     compensated_data = _apply_kpa_phase_compensation(data_patch, a1=a1, a2=a2)
 
     look = _extract_kpa_centered_look(compensated_data)
@@ -1128,7 +1128,9 @@ class LensMapTool(QgsMapToolPan):
         self._active_mode: RenderMode = self._modes[self._render_mode]
         self._kpa_controls = KPAControlsPanel(self.canvas)
         self._kpa_controls.hide()
-        self._kpa_controls.linear_slider.valueChanged.connect(self._on_kpa_linear_changed)
+        self._kpa_controls.linear_slider.valueChanged.connect(
+            self._on_kpa_linear_changed
+        )
         self._kpa_controls.quadratic_slider.valueChanged.connect(
             self._on_kpa_quadratic_changed
         )
@@ -1174,7 +1176,9 @@ class LensMapTool(QgsMapToolPan):
             getattr(metadata, "iceye_processing_mode", None) if metadata else None
         )
         self._kpa_slider_divisor = (
-            _kpa_slider_divisor(metadata) if metadata is not None else _KPA_DEFAULT_DIVISOR
+            _kpa_slider_divisor(metadata)
+            if metadata is not None
+            else _KPA_DEFAULT_DIVISOR
         )
 
         log_key = (layer.id() if layer is not None else None, processing_mode)
@@ -1211,7 +1215,9 @@ class LensMapTool(QgsMapToolPan):
         self._kpa_controls.setVisible(show)
         if show:
             self._kpa_controls.raise_()
-            self._update_kpa_controls_position(self._overlay_pos.x(), self._overlay_pos.y())
+            self._update_kpa_controls_position(
+                self._overlay_pos.x(), self._overlay_pos.y()
+            )
         self._update_kpa_doppler_window_visibility()
 
     def _update_kpa_doppler_window_visibility(self) -> None:
@@ -1249,9 +1255,7 @@ class LensMapTool(QgsMapToolPan):
         if layer is None or self._extent is None:
             return None
 
-        slc = read_slc_data(
-            layer, self._extent, self.metadata_provider, with_geo=True
-        )
+        slc = read_slc_data(layer, self._extent, self.metadata_provider, with_geo=True)
         self._kpa_slc_cache = slc
         self._kpa_slc_cache_key = cache_key
         return slc
