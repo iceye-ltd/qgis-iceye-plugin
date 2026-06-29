@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import math
-import tempfile
 import uuid
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
@@ -473,16 +472,6 @@ def render_georeferenced_data(
     return image
 
 
-KPA_DOPPLER_SPECTRA_PLOT_PATH = (
-    Path(tempfile.gettempdir()) / "iceye_kpa_doppler_spectra.png"
-)
-KPA_LOOKS_PLOT_PATH = Path(tempfile.gettempdir()) / "iceye_kpa_looks_after.png"
-KPA_LOOK_AMPLITUDE_PATH = Path(tempfile.gettempdir()) / "iceye_kpa_look_amplitude.png"
-KPA_CORRECTED_AMPLITUDE_PATH = (
-    Path(tempfile.gettempdir()) / "iceye_kpa_corrected_amplitude.png"
-)
-
-
 def _kpa_doppler_spectrum(data: NDArray[np.complex64]) -> NDArray[np.floating[Any]]:
     """Return log-magnitude Doppler (azimuth FFT) spectrum for complex SLC data."""
     doppler_spectrum = np.fft.fftshift(np.fft.fft(data, axis=0), axes=0)
@@ -512,56 +501,6 @@ def compute_kpa_after_doppler_spectrum(
     return _kpa_doppler_spectrum(compensated)
 
 
-def _save_kpa_doppler_spectra(
-    data_before: NDArray[np.complex64],
-    data_after: NDArray[np.complex64],
-    *,
-    a1: float = 0.0,
-    a2: float = 0.0,
-) -> Path | None:
-    """Save Doppler spectra before and after KPA compensation."""
-    try:
-        import matplotlib
-
-        matplotlib.use("Agg")
-        import matplotlib.pyplot as plt
-    except ImportError:
-        QgsMessageLog.logMessage(
-            "matplotlib is not available; KPA Doppler spectrum plots were not saved",
-            "ICEYE Toolbox",
-            level=Qgis.Warning,
-        )
-        return None
-
-    coeff_suffix = f"(a1={a1:.3f}, a2={a2:.3f})"
-    panels = (
-        ("before KPA", _kpa_doppler_spectrum(data_before)),
-        ("after KPA", _kpa_doppler_spectrum(data_after)),
-    )
-
-    fig, axes = plt.subplots(1, 2, figsize=(12, 5))
-
-    for ax, (label, log_doppler) in zip(axes, panels, strict=True):
-        ax.imshow(log_doppler, cmap="gray", aspect="auto", origin="lower")
-        ax.set_title(f"Doppler spectrum {label} {coeff_suffix}")
-        ax.set_xlabel("Range")
-        ax.set_ylabel("Azimuth frequency")
-
-    fig.tight_layout()
-    try:
-        fig.savefig(KPA_DOPPLER_SPECTRA_PLOT_PATH, dpi=150, bbox_inches="tight")
-    except OSError as exc:
-        QgsMessageLog.logMessage(
-            f"Failed to save KPA Doppler spectrum plots: {exc}",
-            "ICEYE Toolbox",
-            level=Qgis.Warning,
-        )
-        plt.close(fig)
-        return None
-    plt.close(fig)
-    return KPA_DOPPLER_SPECTRA_PLOT_PATH
-
-
 def _extract_kpa_centered_look(
     compensated_data: NDArray[np.complex64],
 ) -> NDArray[np.complex64]:
@@ -579,170 +518,39 @@ def _extract_kpa_centered_look(
     )
 
 
-def _save_kpa_looks(
-    compensated_data: NDArray[np.complex64],
-    *,
-    a1: float = 0.0,
-    a2: float = 0.0,
-) -> Path | None:
-    """Save centered azimuth look after KPA compensation."""
-    try:
-        import matplotlib
-
-        matplotlib.use("Agg")
-        import matplotlib.pyplot as plt
-    except ImportError:
-        QgsMessageLog.logMessage(
-            "matplotlib is not available; KPA look plot was not saved",
-            "ICEYE Toolbox",
-            level=Qgis.Warning,
-        )
-        return None
-
-    look = _extract_kpa_centered_look(compensated_data)
-    log_amplitude = np.log10(np.abs(look) + 1e-10)
-    title_suffix = f"after KPA (a1={a1:.3f}, a2={a2:.3f})"
-
-    fig, ax = plt.subplots(figsize=(8, 6))
-    ax.imshow(log_amplitude, cmap="gray", aspect="auto", origin="lower")
-    ax.set_title(f"Centered look {title_suffix}")
-    ax.set_xlabel("Range")
-    ax.set_ylabel("Azimuth")
-
-    fig.tight_layout()
-    try:
-        fig.savefig(KPA_LOOKS_PLOT_PATH, dpi=150, bbox_inches="tight")
-    except OSError as exc:
-        QgsMessageLog.logMessage(
-            f"Failed to save KPA look plot: {exc}",
-            "ICEYE Toolbox",
-            level=Qgis.Warning,
-        )
-        plt.close(fig)
-        return None
-    plt.close(fig)
-    return KPA_LOOKS_PLOT_PATH
-
-
-def _save_kpa_amplitude_plot(
-    data: NDArray[np.complex64],
-    *,
-    output_path: Path,
-    title: str,
-) -> Path | None:
-    """Plot and save linear amplitude image of complex KPA look data."""
-    try:
-        import matplotlib
-
-        matplotlib.use("Agg")
-        import matplotlib.pyplot as plt
-    except ImportError:
-        QgsMessageLog.logMessage(
-            f"matplotlib is not available; {title} plot was not saved",
-            "ICEYE Toolbox",
-            level=Qgis.Warning,
-        )
-        return None
-
-    magnitude = np.abs(data)
-    thresh = np.mean(magnitude) + 4.0 * np.std(magnitude)
-    magnitude = magnitude.copy()
-    magnitude[magnitude > thresh] = thresh
-    if magnitude.size == 0:
-        return None
-
-    normalized = _normalize_to_uint8(magnitude.astype(np.float32))
-
-    fig, ax = plt.subplots(figsize=(8, 6))
-    ax.imshow(normalized, cmap="gray", aspect="auto", origin="lower")
-    ax.set_title(title)
-    ax.set_xlabel("Range")
-    ax.set_ylabel("Azimuth")
-
-    fig.tight_layout()
-    try:
-        fig.savefig(output_path, dpi=150, bbox_inches="tight")
-    except OSError as exc:
-        QgsMessageLog.logMessage(
-            f"Failed to save {title} plot: {exc}",
-            "ICEYE Toolbox",
-            level=Qgis.Warning,
-        )
-        plt.close(fig)
-        return None
-    plt.close(fig)
-    return output_path
-
-
-def _save_kpa_look_amplitude(
-    look: NDArray[np.complex64],
-) -> Path | None:
-    """Save linear amplitude image of a KPA centered look."""
-    return _save_kpa_amplitude_plot(
-        look,
-        output_path=KPA_LOOK_AMPLITUDE_PATH,
-        title="KPA look amplitude",
-    )
-
-
-def _save_kpa_corrected_amplitude(
-    corrected: NDArray[np.complex64],
-) -> Path | None:
-    """Save linear amplitude image after PGA phase correction."""
-    return _save_kpa_amplitude_plot(
-        corrected,
-        output_path=KPA_CORRECTED_AMPLITUDE_PATH,
-        title="KPA corrected amplitude",
-    )
-
-
-def _kpa_slant_range_mid(metadata: Any) -> float | None:
-    """Return scene slant range at mid-swath from metadata (m)."""
-    r0 = getattr(metadata, "iceye_range", None)
-    if r0 is not None:
-        return float(r0)
-    r_near = getattr(metadata, "iceye_range_near", None)
-    r_far = getattr(metadata, "iceye_range_far", None)
-    if r_near is not None and r_far is not None:
-        return 0.5 * (float(r_near) + float(r_far))
-    if r_near is not None:
-        return float(r_near)
-    return None
-
-
-def _kpa_azimuth_sampling_freq(metadata: Any) -> float | None:
-    """Return azimuth sampling frequency (PRF or 1/azimuth_time_interval) in Hz."""
-    faz = getattr(metadata, "iceye_processing_prf", None)
-    if faz is None:
-        faz = getattr(metadata, "iceye_acquisition_prf", None)
-    return None if faz is None else float(faz)
-
-
-def _kpa_incidence_angle_rad(metadata: Any) -> float | None:
-    """Return incidence angle in radians."""
-    theta = getattr(metadata, "view_incidence_angle", None)
-    if theta is None:
-        theta = getattr(metadata, "iceye_incidence_angle_near", None)
-    if theta is None:
-        return None
-    theta = float(theta)
-    if theta > 2.0 * math.pi:
-        theta = math.radians(theta)
-    return theta
-
-
-def _correction_to_velocity(
-    a1: float,
-    a2: float,
-    metadata: Any,
-) -> tuple[float | None, float | None, float | None, float | None]:
-    """Return slant radial, along-track, ground radial, and ground speed (m/s)."""
+def _kpa_ground_velocity(a1: float, a2: float, metadata: Any) -> float | None:
+    """Return estimated ground velocity (m/s) from KPA phase correction coefficients."""
     platform_velocity = getattr(metadata, "center_aperture_velocity", None)
     dr = getattr(metadata, "sar_pixel_spacing_range", None)
     carrier_freq = getattr(metadata, "sar_center_frequency", None)
-    r0 = _kpa_slant_range_mid(metadata)
-    faz = _kpa_azimuth_sampling_freq(metadata)
-    theta = _kpa_incidence_angle_rad(metadata)
+
+    r0 = getattr(metadata, "iceye_range", None)
+    if r0 is not None:
+        r0 = float(r0)
+    else:
+        r_near = getattr(metadata, "iceye_range_near", None)
+        r_far = getattr(metadata, "iceye_range_far", None)
+        if r_near is not None and r_far is not None:
+            r0 = 0.5 * (float(r_near) + float(r_far))
+        elif r_near is not None:
+            r0 = float(r_near)
+        else:
+            r0 = None
+
+    faz = getattr(metadata, "iceye_processing_prf", None)
+    if faz is None:
+        faz = getattr(metadata, "iceye_acquisition_prf", None)
+    faz = None if faz is None else float(faz)
+
+    theta = getattr(metadata, "view_incidence_angle", None)
+    if theta is None:
+        theta = getattr(metadata, "iceye_incidence_angle_near", None)
+    if theta is not None:
+        theta = float(theta)
+        if theta > 2.0 * math.pi:
+            theta = math.radians(theta)
+    else:
+        theta = None
 
     if (
         platform_velocity is None
@@ -752,59 +560,21 @@ def _correction_to_velocity(
         or faz is None
         or theta is None
     ):
-        return None, None, None, None
+        return None
     if dr <= 0 or r0 <= 0 or faz <= 0 or carrier_freq <= 0:
-        return None, None, None, None
+        return None
 
     c = 299792458.0
     lam = c / float(carrier_freq)
     vp = float(np.linalg.norm(platform_velocity))
     sin_theta = math.sin(theta)
     if sin_theta <= 0:
-        return None, None, None, None
-
-    QgsMessageLog.logMessage(
-        f"pixel spacing range {dr}, faz {faz}",
-        "ICEYE Toolbox",
-        Qgis.Info
-    )
+        return None
 
     v_radial_slant = (2.0 * vp**2 * dr) / (lam * r0 * faz) * a1
     v_along = (4.0 * vp**3 * dr) / (lam**2 * r0 * faz**2) * a2
     v_radial_ground = v_radial_slant / sin_theta
-    v_ground = float(np.hypot(v_along, v_radial_ground))
-    return v_radial_slant, v_along, v_radial_ground, v_ground
-
-
-def _log_kpa_velocities(
-    a1: float,
-    a2: float,
-    metadata: Any,
-) -> None:
-    """Log KPA velocity estimates derived from phase correction coefficients."""
-    v_radial_slant, v_along, v_radial_ground, v_ground = _correction_to_velocity(
-        a1, a2, metadata
-    )
-    if v_ground is None:
-        QgsMessageLog.logMessage(
-            f"KPA velocity: skipped (missing metadata) (a1={a1:.3f}, a2={a2:.3f})",
-            "ICEYE Toolbox",
-            level=Qgis.Info,
-        )
-        return
-    
-    QgsMessageLog.logMessage(
-        f"a2: {a2} a2/4 {a2/4}",
-        "ICEYE Toolbox",
-        level=Qgis.Info
-    )
-
-    message = (
-        f"KPA velocity: v_ground={v_ground:.3f} m/s "
-        f"(v_radial_slant={v_radial_slant:.3f}, v_along={v_along:.3f}, "
-        f"v_radial_ground={v_radial_ground:.3f}, a1={a1:.3f}, a2={a2:.3f})"
-    )
-    QgsMessageLog.logMessage(message, "ICEYE Toolbox", level=Qgis.Info)
+    return float(np.hypot(v_along, v_radial_ground))
 
 
 def _process_kpa(
@@ -812,8 +582,6 @@ def _process_kpa(
 ) -> NDArray[np.uint8]:
     """Apply look extraction + keystone phase algorithm and return display-ready image"""
     compensated_data = _apply_kpa_phase_compensation(data_patch, a1=a1, a2=a2)
-
-    _log_kpa_velocities(a1, a2, metadata)
 
     look = _extract_kpa_centered_look(compensated_data)
     patch, _ = select_pulse_with_strong_target(look, axis=0)
@@ -939,6 +707,7 @@ class RenderMode(ABC):
 
     mode_name: str
     render_delay_ms: ClassVar[int] = 60
+    uses_async_render: ClassVar[bool] = False
 
     def __init__(self) -> None:
         self.render_delay_ms: int = max(0, int(type(self).render_delay_ms))
@@ -1032,22 +801,11 @@ class FocusRenderMode(RenderMode):
 
 
 class KPAFocusRenderMode(RenderMode):
-    """KPA focus view"""
+    """KPA focus view (overlay rendered asynchronously via KpaProcessWorker)."""
 
     mode_name = "kpa"
     render_delay_ms: ClassVar[int] = KPA_RENDER_DELAY_MS
-
-    def __init__(self) -> None:
-        super().__init__()
-        self._a1 = 0.0
-        self._a2 = 0.0
-
-    def set_coefficients(self, *, a1: float | None = None, a2: float | None = None) -> None:
-        """Update linear (a1) and/or quadratic (a2) KPA phase coefficients."""
-        if a1 is not None:
-            self._a1 = float(a1)
-        if a2 is not None:
-            self._a2 = float(a2)
+    uses_async_render: ClassVar[bool] = True
 
     def render(
         self,
@@ -1055,38 +813,8 @@ class KPAFocusRenderMode(RenderMode):
         extent: QgsRectangle,
         **kwargs: Any,
     ) -> tuple[QImage, bool] | None:
-        """Read SLC, Apply KPA, hopefully return a georeferenced image"""
-        metadata_provider = kwargs.get("metadata_provider")
-        canvas = kwargs.get("canvas")
-        overlay_size = int(kwargs.get("overlay_size", 350))
-
-        if metadata_provider is None or canvas is None:
-            return None
-
-        slc = read_slc_data(layer, extent, metadata_provider, with_geo=True)
-
-        if slc is None or slc.data_patch.size == 0 or slc.geo_corners is None:
-            return None
-
-        kpa_result = _process_kpa(
-            slc.data_patch, slc.metadata, a1=self._a1, a2=self._a2
-        )
-
-        if kpa_result.size == 0:
-            return None
-
-        img = render_georeferenced_data(
-            kpa_result,
-            slc.geo_corners or [],
-            slc.layer,
-            slc.extent,
-            "temp_kpa",
-            overlay_size,
-            canvas,
-        )
-        if img is None:
-            return None
-        return (img, True)
+        """Not used; LensMapTool schedules KpaProcessWorker when this mode is active."""
+        return None
 
 
 class ColorRenderMode(RenderMode):
@@ -1420,12 +1148,19 @@ class LensMapTool(QgsMapToolPan):
         """KPA slider panel (parented to the map canvas)."""
         return self._kpa_controls
 
-    def _kpa_mode(self) -> KPAFocusRenderMode:
-        mode = self._modes["kpa"]
-        assert isinstance(mode, KPAFocusRenderMode)
-        return mode
+    @property
+    def _kpa_ui_visible(self) -> bool:
+        return self._render_mode == "kpa" and self._overlay is not None
 
-    def _active_kpa_layer(self) -> QgsRasterLayer | None:
+    def _kpa_coefficients(self) -> tuple[float, float]:
+        """Return current KPA phase coefficients (a1, a2) from slider positions."""
+        divisor = self._kpa_slider_divisor
+        return (
+            self._kpa_controls.linear_slider.value() / divisor,
+            self._kpa_controls.quadratic_slider.value() / divisor,
+        )
+
+    def _resolve_raster_layer(self) -> QgsRasterLayer | None:
         layer = self._layer
         if layer is None or not layer.isValid():
             layer = self._coerce_raster_layer(self.iface.activeLayer())
@@ -1433,7 +1168,7 @@ class LensMapTool(QgsMapToolPan):
 
     def _refresh_kpa_slider_scale(self) -> None:
         """Read active layer metadata once and cache the KPA slider divisor."""
-        layer = self._active_kpa_layer()
+        layer = self._resolve_raster_layer()
         metadata = self.metadata_provider.get(layer) if layer is not None else None
         processing_mode = (
             getattr(metadata, "iceye_processing_mode", None) if metadata else None
@@ -1454,27 +1189,12 @@ class LensMapTool(QgsMapToolPan):
             level=Qgis.Info,
         )
 
-    def _sync_kpa_coefficients_from_sliders(self) -> None:
-        """Apply current slider positions using the cached KPA divisor."""
-        self._kpa_mode().set_coefficients(
-            a1=self._kpa_controls.linear_slider.value() / self._kpa_slider_divisor,
-            a2=self._kpa_controls.quadratic_slider.value() / self._kpa_slider_divisor,
-        )
-
-    def _update_kpa_slider_scale(self) -> None:
-        """Refresh divisor from layer metadata and re-apply slider coefficients."""
-        self._refresh_kpa_slider_scale()
-        if self._render_mode == "kpa":
-            self._sync_kpa_coefficients_from_sliders()
-
-    def _on_kpa_linear_changed(self, value: int) -> None:
-        self._kpa_mode().set_coefficients(a1=value / self._kpa_slider_divisor)
+    def _on_kpa_linear_changed(self, _value: int) -> None:
         if self._render_mode == "kpa":
             self._schedule_render()
             self._schedule_kpa_doppler_update()
 
-    def _on_kpa_quadratic_changed(self, value: int) -> None:
-        self._kpa_mode().set_coefficients(a2=value / self._kpa_slider_divisor)
+    def _on_kpa_quadratic_changed(self, _value: int) -> None:
         if self._render_mode == "kpa":
             self._schedule_render()
             self._schedule_kpa_doppler_update()
@@ -1487,7 +1207,7 @@ class LensMapTool(QgsMapToolPan):
         self._kpa_doppler_timer.start(KPA_RENDER_DELAY_MS)
 
     def _update_kpa_controls_visibility(self) -> None:
-        show = self._render_mode == "kpa" and self._overlay is not None
+        show = self._kpa_ui_visible
         self._kpa_controls.setVisible(show)
         if show:
             self._kpa_controls.raise_()
@@ -1495,7 +1215,7 @@ class LensMapTool(QgsMapToolPan):
         self._update_kpa_doppler_window_visibility()
 
     def _update_kpa_doppler_window_visibility(self) -> None:
-        show = self._render_mode == "kpa" and self._overlay is not None
+        show = self._kpa_ui_visible
         if show:
             if self._kpa_doppler_window is None:
                 self._kpa_doppler_window = KpaDopplerWindow(self.iface.mainWindow())
@@ -1512,28 +1232,25 @@ class LensMapTool(QgsMapToolPan):
     def _kpa_slc_cache_identity(self) -> tuple[Any, ...] | None:
         if self._extent is None:
             return None
-        layer = self._layer
-        if layer is None or not layer.isValid():
-            layer = self._coerce_raster_layer(self.iface.activeLayer())
-        if layer is None or not layer.isValid():
+        layer = self._resolve_raster_layer()
+        if layer is None:
             return None
         return (layer.id(), self._extent.toString())
 
     def _read_kpa_slc_data(self) -> LensSLCData | None:
+        """Return cached SLC patch (with geo corners) for KPA overlay and Doppler window."""
         cache_key = self._kpa_slc_cache_identity()
         if cache_key is None:
             return None
         if self._kpa_slc_cache is not None and self._kpa_slc_cache_key == cache_key:
             return self._kpa_slc_cache
 
-        layer = self._layer
-        if layer is None or not layer.isValid():
-            layer = self._coerce_raster_layer(self.iface.activeLayer())
-        if layer is None or not layer.isValid() or self._extent is None:
+        layer = self._resolve_raster_layer()
+        if layer is None or self._extent is None:
             return None
 
         slc = read_slc_data(
-            layer, self._extent, self.metadata_provider, with_geo=False
+            layer, self._extent, self.metadata_provider, with_geo=True
         )
         self._kpa_slc_cache = slc
         self._kpa_slc_cache_key = cache_key
@@ -1549,20 +1266,18 @@ class LensMapTool(QgsMapToolPan):
         if slc is None or slc.data_patch.size == 0:
             return
 
-        kpa = self._kpa_mode()
+        a1, a2 = self._kpa_coefficients()
         log_doppler = compute_kpa_after_doppler_spectrum(
             slc.data_patch,
-            a1=kpa._a1,
-            a2=kpa._a2,
+            a1=a1,
+            a2=a2,
         )
-        _, _, _, v_ground = _correction_to_velocity(
-            kpa._a1, kpa._a2, slc.metadata
-        )
+        velocity = _kpa_ground_velocity(a1, a2, slc.metadata)
         self._kpa_doppler_window.update_spectrum(
             log_doppler,
-            a1=kpa._a1,
-            a2=kpa._a2,
-            velocity=v_ground,
+            a1=a1,
+            a2=a2,
+            velocity=velocity,
         )
 
     def _update_kpa_controls_position(self, overlay_x: int, overlay_y: int) -> None:
@@ -1586,7 +1301,7 @@ class LensMapTool(QgsMapToolPan):
     def _on_current_layer_changed(self, layer: QgsMapLayer | None) -> None:
         self._layer = self._coerce_raster_layer(layer)
         self._invalidate_kpa_slc_cache()
-        self._update_kpa_slider_scale()
+        self._refresh_kpa_slider_scale()
         self._recompute_extent()
         self._schedule_render()
 
@@ -1790,10 +1505,8 @@ class LensMapTool(QgsMapToolPan):
     def _do_render(self) -> tuple[QImage, bool] | None:
         if self._extent is None:
             return None
-        layer = self._layer
-        if layer is None or not layer.isValid():
-            layer = self._coerce_raster_layer(self.iface.activeLayer())
-        if layer is None or not layer.isValid():
+        layer = self._resolve_raster_layer()
+        if layer is None:
             return None
         return self._active_mode.render(layer, self._extent, **self._render_kwargs())
 
@@ -1817,7 +1530,7 @@ class LensMapTool(QgsMapToolPan):
         self._recompute_extent()
         self._update_extent_band()
 
-        if self._render_mode == "kpa":
+        if self._active_mode.uses_async_render:
             self._schedule_kpa_overlay_render()
             return
 
@@ -1840,19 +1553,11 @@ class LensMapTool(QgsMapToolPan):
         self._kpa_process_worker = worker
 
     def _schedule_kpa_overlay_render(self) -> None:
-        if self._extent is None:
-            return
-        layer = self._layer
-        if layer is None or not layer.isValid():
-            layer = self._coerce_raster_layer(self.iface.activeLayer())
-        if layer is None or not layer.isValid():
-            return
-
-        slc = read_slc_data(layer, self._extent, self.metadata_provider, with_geo=True)
+        slc = self._read_kpa_slc_data()
         if slc is None or slc.data_patch.size == 0 or slc.geo_corners is None:
             return
 
-        kpa = self._kpa_mode()
+        a1, a2 = self._kpa_coefficients()
         self._kpa_render_request_id += 1
         request_id = self._kpa_render_request_id
         self._kpa_pending_slc = slc
@@ -1865,8 +1570,8 @@ class LensMapTool(QgsMapToolPan):
             request_id,
             data_copy,
             slc.metadata,
-            kpa._a1,
-            kpa._a2,
+            a1,
+            a2,
         )
 
     def _on_kpa_process_finished(self, request_id: int, result: object) -> None:
@@ -1969,7 +1674,7 @@ class LensMapTool(QgsMapToolPan):
         self._update_kpa_controls_visibility()
         self._schedule_render()
         if mode == "kpa":
-            self._update_kpa_slider_scale()
+            self._refresh_kpa_slider_scale()
             self._schedule_kpa_doppler_update()
 
     def render_mode(self) -> str:
