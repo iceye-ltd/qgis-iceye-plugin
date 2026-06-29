@@ -69,6 +69,34 @@ from .toolbar_button_policy import ToolbarButtonPolicy
 
 KPA_RENDER_DELAY_MS = 200
 
+# Longest prefixes first (SLEDP/SLEDF must precede SLED).
+_KPA_FINE_PROCESSING_MODE_PREFIXES = ("SLEDP", "SLEDF", "SLED")
+_KPA_COARSE_PROCESSING_MODE_PREFIXES = ("SLH", "SLP", "SLF")
+_KPA_FINE_DIVISOR = 5.0
+_KPA_COARSE_DIVISOR = 100.0
+_KPA_DEFAULT_DIVISOR = _KPA_FINE_DIVISOR
+
+
+def _kpa_slider_divisor(metadata: Any) -> float:
+    """Map slider ticks to a1/a2 using ICEYE processing mode."""
+    mode = (getattr(metadata, "iceye_processing_mode", None) or "").strip().upper()
+    if not mode:
+        return _KPA_DEFAULT_DIVISOR
+
+    for prefix in _KPA_FINE_PROCESSING_MODE_PREFIXES:
+        if mode.startswith(prefix):
+            return _KPA_FINE_DIVISOR
+
+    if mode == "SL":
+        return _KPA_COARSE_DIVISOR
+
+    for prefix in _KPA_COARSE_PROCESSING_MODE_PREFIXES:
+        if mode.startswith(prefix):
+            return _KPA_COARSE_DIVISOR
+
+    return _KPA_DEFAULT_DIVISOR
+
+
 # --- Extent (meters) ---------------------------------------------------------------------------
 
 MIN_EXTENT_M = 100.0
@@ -1384,6 +1412,8 @@ class LensMapTool(QgsMapToolPan):
         self._kpa_pending_slc: LensSLCData | None = None
         self._kpa_process_thread: QThread | None = None
         self._kpa_process_worker: KpaProcessWorker | None = None
+        self._kpa_slider_divisor = _KPA_DEFAULT_DIVISOR
+        self._kpa_processing_log_key: tuple[Any, ...] | None = None
 
     @property
     def kpa_controls(self) -> KPAControlsPanel:
@@ -1395,14 +1425,56 @@ class LensMapTool(QgsMapToolPan):
         assert isinstance(mode, KPAFocusRenderMode)
         return mode
 
+    def _active_kpa_layer(self) -> QgsRasterLayer | None:
+        layer = self._layer
+        if layer is None or not layer.isValid():
+            layer = self._coerce_raster_layer(self.iface.activeLayer())
+        return layer
+
+    def _refresh_kpa_slider_scale(self) -> None:
+        """Read active layer metadata once and cache the KPA slider divisor."""
+        layer = self._active_kpa_layer()
+        metadata = self.metadata_provider.get(layer) if layer is not None else None
+        processing_mode = (
+            getattr(metadata, "iceye_processing_mode", None) if metadata else None
+        )
+        self._kpa_slider_divisor = (
+            _kpa_slider_divisor(metadata) if metadata is not None else _KPA_DEFAULT_DIVISOR
+        )
+
+        log_key = (layer.id() if layer is not None else None, processing_mode)
+        if log_key == self._kpa_processing_log_key:
+            return
+        self._kpa_processing_log_key = log_key
+        QgsMessageLog.logMessage(
+            "KPA sliders: "
+            f"iceye_processing_mode={processing_mode!r}, "
+            f"divisor={self._kpa_slider_divisor}",
+            "ICEYE Toolbox",
+            level=Qgis.Info,
+        )
+
+    def _sync_kpa_coefficients_from_sliders(self) -> None:
+        """Apply current slider positions using the cached KPA divisor."""
+        self._kpa_mode().set_coefficients(
+            a1=self._kpa_controls.linear_slider.value() / self._kpa_slider_divisor,
+            a2=self._kpa_controls.quadratic_slider.value() / self._kpa_slider_divisor,
+        )
+
+    def _update_kpa_slider_scale(self) -> None:
+        """Refresh divisor from layer metadata and re-apply slider coefficients."""
+        self._refresh_kpa_slider_scale()
+        if self._render_mode == "kpa":
+            self._sync_kpa_coefficients_from_sliders()
+
     def _on_kpa_linear_changed(self, value: int) -> None:
-        self._kpa_mode().set_coefficients(a1=value / 5.0)
+        self._kpa_mode().set_coefficients(a1=value / self._kpa_slider_divisor)
         if self._render_mode == "kpa":
             self._schedule_render()
             self._schedule_kpa_doppler_update()
 
     def _on_kpa_quadratic_changed(self, value: int) -> None:
-        self._kpa_mode().set_coefficients(a2=value / 5.0)
+        self._kpa_mode().set_coefficients(a2=value / self._kpa_slider_divisor)
         if self._render_mode == "kpa":
             self._schedule_render()
             self._schedule_kpa_doppler_update()
@@ -1514,6 +1586,7 @@ class LensMapTool(QgsMapToolPan):
     def _on_current_layer_changed(self, layer: QgsMapLayer | None) -> None:
         self._layer = self._coerce_raster_layer(layer)
         self._invalidate_kpa_slc_cache()
+        self._update_kpa_slider_scale()
         self._recompute_extent()
         self._schedule_render()
 
@@ -1896,6 +1969,7 @@ class LensMapTool(QgsMapToolPan):
         self._update_kpa_controls_visibility()
         self._schedule_render()
         if mode == "kpa":
+            self._update_kpa_slider_scale()
             self._schedule_kpa_doppler_update()
 
     def render_mode(self) -> str:

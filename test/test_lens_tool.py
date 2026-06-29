@@ -11,6 +11,7 @@ from iceye_toolbox.gui.lens_tool import (
     LensMapTool,
     _apply_kpa_phase_compensation,
     _kpa_doppler_spectrum,
+    _kpa_slider_divisor,
     _process_color_spectrum,
     _process_focus_data,
     compute_kpa_after_doppler_spectrum,
@@ -51,6 +52,23 @@ class TestProcessFocusData:
         assert result.ndim == 2, "Output should be 2D"
         assert result.dtype == np.uint8, "Output should be uint8"
         assert result.size > 0, "Output should not be empty"
+
+
+class TestKpaSliderDivisorPrefixes:
+    """Tests for KPA slider divisor prefix/suffix matching."""
+
+    @pytest.mark.parametrize("mode", ["SLF1L", "SLP2L", "SLH3L"])
+    def test_multilook_suffixes_use_coarse_divisor(self, metadata, mode):
+        metadata.iceye_processing_mode = mode
+        assert _kpa_slider_divisor(metadata) == 100.0
+
+    def test_sledp_matches_fine_before_sled_prefix(self, metadata):
+        metadata.iceye_processing_mode = "SLEDP"
+        assert _kpa_slider_divisor(metadata) == 5.0
+
+    def test_unknown_mode_defaults_to_fine_divisor(self, metadata):
+        metadata.iceye_processing_mode = "STRIPMAP"
+        assert _kpa_slider_divisor(metadata) == 5.0
 
 
 class TestKpaDopplerSpectrum:
