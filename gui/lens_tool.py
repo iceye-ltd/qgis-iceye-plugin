@@ -26,23 +26,32 @@ from qgis.core import (
 from qgis.gui import QgsMapToolPan, QgsRubberBand
 from qgis.PyQt.QtCore import (
     QCoreApplication,
+    QObject,
     QPoint,
     QPointF,
     QSize,
     Qt,
+    QThread,
     QTimer,
     pyqtSignal,
+    pyqtSlot,
 )
 from qgis.PyQt.QtGui import QBrush, QColor, QIcon, QImage, QKeySequence, QPen, QPixmap
 from qgis.PyQt.QtWidgets import (
     QAction,
     QActionGroup,
+    QFrame,
     QGraphicsItemGroup,
     QGraphicsPixmapItem,
     QGraphicsRectItem,
+    QHBoxLayout,
+    QLabel,
     QMenu,
     QShortcut,
+    QSlider,
     QToolButton,
+    QVBoxLayout,
+    QWidget,
 )
 
 from ..core.autofocus import (
@@ -54,7 +63,38 @@ from ..core.cropper import get_extend_image_coords
 from ..core.looks import extract_centered_look
 from ..core.metadata import MetadataProvider
 from ..core.raster import read_slc_layer
+from .kpa_doppler_window import KpaDopplerWindow
 from .toolbar_button_policy import ToolbarButtonPolicy
+
+KPA_RENDER_DELAY_MS = 200
+
+# Longest prefixes first (SLEDP/SLEDF must precede SLED).
+_KPA_FINE_PROCESSING_MODE_PREFIXES = ("SLEDP", "SLEDF", "SLED")
+_KPA_COARSE_PROCESSING_MODE_PREFIXES = ("SLH", "SLP", "SLF")
+_KPA_FINE_DIVISOR = 5.0
+_KPA_COARSE_DIVISOR = 100.0
+_KPA_DEFAULT_DIVISOR = _KPA_FINE_DIVISOR
+
+
+def _kpa_slider_divisor(metadata: Any) -> float:
+    """Map slider ticks to a1/a2 using ICEYE processing mode."""
+    mode = (getattr(metadata, "iceye_processing_mode", None) or "").strip().upper()
+    if not mode:
+        return _KPA_DEFAULT_DIVISOR
+
+    for prefix in _KPA_FINE_PROCESSING_MODE_PREFIXES:
+        if mode.startswith(prefix):
+            return _KPA_FINE_DIVISOR
+
+    if mode == "SL":
+        return _KPA_COARSE_DIVISOR
+
+    for prefix in _KPA_COARSE_PROCESSING_MODE_PREFIXES:
+        if mode.startswith(prefix):
+            return _KPA_COARSE_DIVISOR
+
+    return _KPA_DEFAULT_DIVISOR
+
 
 # --- Extent (meters) ---------------------------------------------------------------------------
 
@@ -69,8 +109,14 @@ _SLC_RENDER_MODES = frozenset(
         "range_spectrum",
         "azimuth_viewer",
         "range_viewer",
+        "kpa",
     }
 )
+
+
+def _tr(message: str) -> str:
+    """Translate message for ICEYE Toolbox context."""
+    return QCoreApplication.translate("ICEYE Toolbox", message)
 
 
 def compute_lens_extent(
@@ -177,6 +223,39 @@ class LensOverlayItem(QGraphicsItemGroup):
         if image is None:
             return
         self._pixmap_item.setPixmap(QPixmap.fromImage(image))
+
+
+class KPAControlsPanel(QFrame):
+    """Floating KPA coefficient sliders shown beside the lens overlay."""
+
+    def __init__(self, parent: QWidget | None = None) -> None:
+        super().__init__(parent)
+        self.setFrameShape(QFrame.Shape.StyledPanel)
+        self.setAutoFillBackground(True)
+        self.setFixedWidth(220)
+
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(8, 10, 8, 10)
+        layout.setSpacing(8)
+        self.setMinimumHeight(78)
+
+        linear_row = QHBoxLayout()
+        linear_row.addWidget(QLabel(_tr("L")))
+        self.linear_slider = QSlider(Qt.Orientation.Horizontal)
+        self.linear_slider.setRange(-1000, 1000)
+        self.linear_slider.setValue(0)
+        self.linear_slider.setToolTip(_tr("KPA linear phase coefficient (a1)"))
+        linear_row.addWidget(self.linear_slider)
+        layout.addLayout(linear_row)
+
+        quadratic_row = QHBoxLayout()
+        quadratic_row.addWidget(QLabel(_tr("Q")))
+        self.quadratic_slider = QSlider(Qt.Orientation.Horizontal)
+        self.quadratic_slider.setRange(-1000, 1000)
+        self.quadratic_slider.setValue(0)
+        self.quadratic_slider.setToolTip(_tr("KPA quadratic phase coefficient (a2)"))
+        quadratic_row.addWidget(self.quadratic_slider)
+        layout.addLayout(quadratic_row)
 
 
 @dataclass
@@ -393,6 +472,163 @@ def render_georeferenced_data(
     return image
 
 
+def _kpa_doppler_spectrum(data: NDArray[np.complex64]) -> NDArray[np.floating[Any]]:
+    """Return log-magnitude Doppler (azimuth FFT) spectrum for complex SLC data."""
+    doppler_spectrum = np.fft.fftshift(np.fft.fft(data, axis=0), axes=0)
+    return np.log10(np.abs(doppler_spectrum) + 1e-10)
+
+
+def _apply_kpa_phase_compensation(
+    data_patch: NDArray[np.complex64], *, a1: float = 0.0, a2: float = 0.0
+) -> NDArray[np.complex64]:
+    """Apply KPA keystone phase correction in the frequency domain."""
+    ba, br = data_patch.shape
+    fa = np.arange(-ba / 2.0, ba / 2.0, 1.0) / ba
+    fr = np.arange(-br / 2.0, br / 2.0, 1.0) / br
+    fr_grid, fa_grid = np.meshgrid(fr, fa)
+    delta_az = a2 * fa_grid**2 + a1 * fa_grid
+    phase = np.exp(1j * 2.0 * np.pi * fr_grid * delta_az)
+    phase = np.fft.fftshift(phase)
+    spectrum2d = np.fft.fft2(data_patch)
+    return np.fft.ifft2(spectrum2d * phase)
+
+
+def compute_kpa_after_doppler_spectrum(
+    data_patch: NDArray[np.complex64], *, a1: float, a2: float
+) -> NDArray[np.floating[Any]]:
+    """Return 2D log-magnitude Doppler spectrum after KPA compensation."""
+    compensated = _apply_kpa_phase_compensation(data_patch, a1=a1, a2=a2)
+    return _kpa_doppler_spectrum(compensated)
+
+
+def _extract_kpa_centered_look(
+    compensated_data: NDArray[np.complex64],
+) -> NDArray[np.complex64]:
+    """Extract centered azimuth look from KPA-compensated data (same size as PGA focus)."""
+    spectrum = np.fft.fftshift(np.fft.fft2(compensated_data))
+    rows, cols = spectrum.shape
+    azimuth_look_size = max(1, int(rows * 0.025))
+    return extract_centered_look(
+        spectrum,
+        center_row=rows // 2,
+        center_col=cols // 2,
+        look_rows=azimuth_look_size,
+        look_cols=cols,
+        apply_ifftshift=True,
+    )
+
+
+def _kpa_ground_velocity(a1: float, a2: float, metadata: Any) -> float | None:
+    """Return estimated ground velocity (m/s) from KPA phase correction coefficients."""
+    platform_velocity = getattr(metadata, "center_aperture_velocity", None)
+    dr = getattr(metadata, "sar_pixel_spacing_range", None)
+    carrier_freq = getattr(metadata, "sar_center_frequency", None)
+
+    r0 = getattr(metadata, "iceye_range", None)
+    if r0 is not None:
+        r0 = float(r0)
+    else:
+        r_near = getattr(metadata, "iceye_range_near", None)
+        r_far = getattr(metadata, "iceye_range_far", None)
+        if r_near is not None and r_far is not None:
+            r0 = 0.5 * (float(r_near) + float(r_far))
+        elif r_near is not None:
+            r0 = float(r_near)
+        else:
+            r0 = None
+
+    faz = getattr(metadata, "iceye_processing_prf", None)
+    if faz is None:
+        faz = getattr(metadata, "iceye_acquisition_prf", None)
+    faz = None if faz is None else float(faz)
+
+    theta = getattr(metadata, "view_incidence_angle", None)
+    if theta is None:
+        theta = getattr(metadata, "iceye_incidence_angle_near", None)
+    if theta is not None:
+        theta = float(theta)
+        if theta > 2.0 * math.pi:
+            theta = math.radians(theta)
+    else:
+        theta = None
+
+    if (
+        platform_velocity is None
+        or dr is None
+        or carrier_freq is None
+        or r0 is None
+        or faz is None
+        or theta is None
+    ):
+        return None
+    if dr <= 0 or r0 <= 0 or faz <= 0 or carrier_freq <= 0:
+        return None
+
+    c = 299792458.0
+    lam = c / float(carrier_freq)
+    vp = float(np.linalg.norm(platform_velocity))
+    sin_theta = math.sin(theta)
+    if sin_theta <= 0:
+        return None
+
+    v_radial_slant = (2.0 * vp**2 * dr) / (lam * r0 * faz) * a1
+    v_along = (4.0 * vp**3 * dr) / (lam**2 * r0 * faz**2) * a2
+    v_radial_ground = v_radial_slant / sin_theta
+    return float(np.hypot(v_along, v_radial_ground))
+
+
+def _process_kpa(
+    data_patch: NDArray[np.complex64], metadata: Any, a1: float = 0.0, a2: float = 0.0
+) -> NDArray[np.uint8]:
+    """Apply look extraction + keystone phase algorithm and return display-ready image."""
+    compensated_data = _apply_kpa_phase_compensation(data_patch, a1=a1, a2=a2)
+
+    look = _extract_kpa_centered_look(compensated_data)
+    patch, _ = select_pulse_with_strong_target(look, axis=0)
+    phase_error, _, _ = phase_gradient_autofocus(patch)
+    corrected = apply_phase_correction(look, phase_error)
+    magnitude = np.abs(corrected)
+    thresh = np.mean(magnitude) + 4.0 * np.std(magnitude)
+    magnitude[magnitude > thresh] = thresh
+    if magnitude.size == 0:
+        return np.zeros((0, 0), dtype=np.uint8)
+    normalized = _normalize_to_uint8(magnitude.astype(np.float32))
+    return _orient_slc_image(
+        normalized, getattr(metadata, "sar_observation_direction", "")
+    )
+
+
+class KpaProcessWorker(QObject):
+    """Run KPA image processing off the UI thread."""
+
+    requested = pyqtSignal(int, object, object, float, float)
+    finished = pyqtSignal(int, object)
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.requested.connect(self._run)
+
+    @pyqtSlot(int, object, object, float, float)
+    def _run(
+        self,
+        request_id: int,
+        data_patch: NDArray[np.complex64],
+        metadata: Any,
+        a1: float,
+        a2: float,
+    ) -> None:
+        try:
+            result = _process_kpa(data_patch, metadata, a1=a1, a2=a2)
+        except Exception as exc:
+            QgsMessageLog.logMessage(
+                f"KPA processing failed: {exc}",
+                "ICEYE Toolbox",
+                level=Qgis.Warning,
+            )
+            result = None
+        self.finished.emit(request_id, result)
+
+
 def _process_focus_data(
     data_patch: NDArray[np.complex64], metadata: Any
 ) -> NDArray[np.uint8]:
@@ -471,6 +707,7 @@ class RenderMode(ABC):
 
     mode_name: str
     render_delay_ms: ClassVar[int] = 60
+    uses_async_render: ClassVar[bool] = False
 
     def __init__(self) -> None:
         self.render_delay_ms: int = max(0, int(type(self).render_delay_ms))
@@ -561,6 +798,23 @@ class FocusRenderMode(RenderMode):
         if img is None:
             return None
         return (img, True)
+
+
+class KPAFocusRenderMode(RenderMode):
+    """KPA focus view (overlay rendered asynchronously via KpaProcessWorker)."""
+
+    mode_name = "kpa"
+    render_delay_ms: ClassVar[int] = KPA_RENDER_DELAY_MS
+    uses_async_render: ClassVar[bool] = True
+
+    def render(
+        self,
+        layer: QgsRasterLayer,
+        extent: QgsRectangle,
+        **kwargs: Any,
+    ) -> tuple[QImage, bool] | None:
+        """Not used; LensMapTool schedules KpaProcessWorker when this mode is active."""
+        return None
 
 
 class ColorRenderMode(RenderMode):
@@ -855,6 +1109,9 @@ class LensMapTool(QgsMapToolPan):
         self._render_timer = QTimer(self)
         self._render_timer.setSingleShot(True)
         self._render_timer.timeout.connect(self._update_overlay)
+        self._kpa_doppler_timer = QTimer(self)
+        self._kpa_doppler_timer.setSingleShot(True)
+        self._kpa_doppler_timer.timeout.connect(self._update_kpa_doppler_window)
         self.canvas.extentsChanged.connect(self._on_canvas_extent_changed)
         self._render_mode = "normal"
         self._modes: dict[str, RenderMode] = {
@@ -865,9 +1122,179 @@ class LensMapTool(QgsMapToolPan):
             "range_spectrum": RangeSpectrumRenderMode(),
             "azimuth_viewer": AzimuthViewerRenderMode(),
             "range_viewer": RangeViewerRenderMode(),
+            "kpa": KPAFocusRenderMode(),
         }
         self._render_modes = set(self._modes.keys())
         self._active_mode: RenderMode = self._modes[self._render_mode]
+        self._kpa_controls = KPAControlsPanel(self.canvas)
+        self._kpa_controls.hide()
+        self._kpa_controls.linear_slider.valueChanged.connect(
+            self._on_kpa_linear_changed
+        )
+        self._kpa_controls.quadratic_slider.valueChanged.connect(
+            self._on_kpa_quadratic_changed
+        )
+        self._overlay_pos = QPoint(0, 0)
+        self._kpa_doppler_window: KpaDopplerWindow | None = None
+        self._kpa_slc_cache: LensSLCData | None = None
+        self._kpa_slc_cache_key: tuple[Any, ...] | None = None
+        self._kpa_render_request_id = 0
+        self._kpa_pending_slc: LensSLCData | None = None
+        self._kpa_process_thread: QThread | None = None
+        self._kpa_process_worker: KpaProcessWorker | None = None
+        self._kpa_slider_divisor = _KPA_DEFAULT_DIVISOR
+        self._kpa_processing_log_key: tuple[Any, ...] | None = None
+
+    @property
+    def kpa_controls(self) -> KPAControlsPanel:
+        """KPA slider panel (parented to the map canvas)."""
+        return self._kpa_controls
+
+    @property
+    def _kpa_ui_visible(self) -> bool:
+        return self._render_mode == "kpa" and self._overlay is not None
+
+    def _kpa_coefficients(self) -> tuple[float, float]:
+        """Return current KPA phase coefficients (a1, a2) from slider positions."""
+        divisor = self._kpa_slider_divisor
+        return (
+            self._kpa_controls.linear_slider.value() / divisor,
+            self._kpa_controls.quadratic_slider.value() / divisor,
+        )
+
+    def _resolve_raster_layer(self) -> QgsRasterLayer | None:
+        layer = self._layer
+        if layer is None or not layer.isValid():
+            layer = self._coerce_raster_layer(self.iface.activeLayer())
+        return layer
+
+    def _refresh_kpa_slider_scale(self) -> None:
+        """Read active layer metadata once and cache the KPA slider divisor."""
+        layer = self._resolve_raster_layer()
+        metadata = self.metadata_provider.get(layer) if layer is not None else None
+        processing_mode = (
+            getattr(metadata, "iceye_processing_mode", None) if metadata else None
+        )
+        self._kpa_slider_divisor = (
+            _kpa_slider_divisor(metadata)
+            if metadata is not None
+            else _KPA_DEFAULT_DIVISOR
+        )
+
+        log_key = (layer.id() if layer is not None else None, processing_mode)
+        if log_key == self._kpa_processing_log_key:
+            return
+        self._kpa_processing_log_key = log_key
+        QgsMessageLog.logMessage(
+            "KPA sliders: "
+            f"iceye_processing_mode={processing_mode!r}, "
+            f"divisor={self._kpa_slider_divisor}",
+            "ICEYE Toolbox",
+            level=Qgis.Info,
+        )
+
+    def _on_kpa_linear_changed(self, _value: int) -> None:
+        if self._render_mode == "kpa":
+            self._schedule_render()
+            self._schedule_kpa_doppler_update()
+
+    def _on_kpa_quadratic_changed(self, _value: int) -> None:
+        if self._render_mode == "kpa":
+            self._schedule_render()
+            self._schedule_kpa_doppler_update()
+
+    def _schedule_kpa_doppler_update(self) -> None:
+        if self._render_mode != "kpa":
+            return
+        if self._kpa_doppler_timer.isActive():
+            self._kpa_doppler_timer.stop()
+        self._kpa_doppler_timer.start(KPA_RENDER_DELAY_MS)
+
+    def _update_kpa_controls_visibility(self) -> None:
+        show = self._kpa_ui_visible
+        self._kpa_controls.setVisible(show)
+        if show:
+            self._kpa_controls.raise_()
+            self._update_kpa_controls_position(
+                self._overlay_pos.x(), self._overlay_pos.y()
+            )
+        self._update_kpa_doppler_window_visibility()
+
+    def _update_kpa_doppler_window_visibility(self) -> None:
+        show = self._kpa_ui_visible
+        if show:
+            if self._kpa_doppler_window is None:
+                self._kpa_doppler_window = KpaDopplerWindow(self.iface.mainWindow())
+            self._kpa_doppler_window.show()
+            self._kpa_doppler_window.raise_()
+            self._schedule_kpa_doppler_update()
+        elif self._kpa_doppler_window is not None:
+            self._kpa_doppler_window.hide()
+
+    def _invalidate_kpa_slc_cache(self) -> None:
+        self._kpa_slc_cache = None
+        self._kpa_slc_cache_key = None
+
+    def _kpa_slc_cache_identity(self) -> tuple[Any, ...] | None:
+        if self._extent is None:
+            return None
+        layer = self._resolve_raster_layer()
+        if layer is None:
+            return None
+        return (layer.id(), self._extent.toString())
+
+    def _read_kpa_slc_data(self) -> LensSLCData | None:
+        """Return cached SLC patch (with geo corners) for KPA overlay and Doppler window."""
+        cache_key = self._kpa_slc_cache_identity()
+        if cache_key is None:
+            return None
+        if self._kpa_slc_cache is not None and self._kpa_slc_cache_key == cache_key:
+            return self._kpa_slc_cache
+
+        layer = self._resolve_raster_layer()
+        if layer is None or self._extent is None:
+            return None
+
+        slc = read_slc_data(layer, self._extent, self.metadata_provider, with_geo=True)
+        self._kpa_slc_cache = slc
+        self._kpa_slc_cache_key = cache_key
+        return slc
+
+    def _update_kpa_doppler_window(self) -> None:
+        if self._render_mode != "kpa" or self._kpa_doppler_window is None:
+            return
+        if not self._kpa_doppler_window.isVisible():
+            return
+
+        slc = self._read_kpa_slc_data()
+        if slc is None or slc.data_patch.size == 0:
+            return
+
+        a1, a2 = self._kpa_coefficients()
+        log_doppler = compute_kpa_after_doppler_spectrum(
+            slc.data_patch,
+            a1=a1,
+            a2=a2,
+        )
+        velocity = _kpa_ground_velocity(a1, a2, slc.metadata)
+        self._kpa_doppler_window.update_spectrum(
+            log_doppler,
+            a1=a1,
+            a2=a2,
+            velocity=velocity,
+        )
+
+    def _update_kpa_controls_position(self, overlay_x: int, overlay_y: int) -> None:
+        if not self._kpa_controls.isVisible():
+            return
+        canvas_size = self.canvas.size()
+        panel_w = self._kpa_controls.width()
+        panel_h = self._kpa_controls.height()
+        x = max(0, min(overlay_x, canvas_size.width() - panel_w))
+        y = overlay_y + self.overlay_size + 4
+        if y + panel_h > canvas_size.height():
+            y = max(0, overlay_y - panel_h - 4)
+        self._kpa_controls.move(x, y)
 
     @staticmethod
     def _coerce_raster_layer(layer: QgsMapLayer | None) -> QgsRasterLayer | None:
@@ -877,6 +1304,8 @@ class LensMapTool(QgsMapToolPan):
 
     def _on_current_layer_changed(self, layer: QgsMapLayer | None) -> None:
         self._layer = self._coerce_raster_layer(layer)
+        self._invalidate_kpa_slc_cache()
+        self._refresh_kpa_slider_scale()
         self._recompute_extent()
         self._schedule_render()
 
@@ -900,6 +1329,7 @@ class LensMapTool(QgsMapToolPan):
         self._overlay.show()
         if self._extent_band is not None:
             self._extent_band.show()
+        self._update_kpa_controls_visibility()
         self.canvas.setCursor(Qt.CursorShape.CrossCursor)
 
         self._shortcut_scroll_fwd = QShortcut(QKeySequence("Shift+Up"), self.canvas)
@@ -922,6 +1352,9 @@ class LensMapTool(QgsMapToolPan):
             pass
         if self._render_timer.isActive():
             self._render_timer.stop()
+        if self._kpa_doppler_timer.isActive():
+            self._kpa_doppler_timer.stop()
+        self._stop_kpa_process_thread()
         for shortcut in ("_shortcut_scroll_fwd", "_shortcut_scroll_bwd"):
             sc = getattr(self, shortcut, None)
             if sc is not None:
@@ -934,6 +1367,11 @@ class LensMapTool(QgsMapToolPan):
             self._extent_band.reset(QgsWkbTypes.GeometryType.PolygonGeometry)
             self._extent_band.hide()
             self._extent_band = None
+
+        self._kpa_controls.hide()
+        if self._kpa_doppler_window is not None:
+            self._kpa_doppler_window.hide()
+        self._invalidate_kpa_slc_cache()
 
         self._pinned = False
         self._pinned_pos = None
@@ -953,6 +1391,8 @@ class LensMapTool(QgsMapToolPan):
         self._update_position(self._last_pos)
         self._update_extent_band()
         self._schedule_render()
+        if self._render_mode == "kpa":
+            self._schedule_kpa_doppler_update()
 
     def canvasPressEvent(self, event):
         """Handle canvas mouse press."""
@@ -1048,6 +1488,7 @@ class LensMapTool(QgsMapToolPan):
             self.canvas,
             self.overlay_size,
         )
+        self._invalidate_kpa_slc_cache()
 
     def _schedule_render(self) -> None:
         if self._render_timer.isActive():
@@ -1068,10 +1509,8 @@ class LensMapTool(QgsMapToolPan):
     def _do_render(self) -> tuple[QImage, bool] | None:
         if self._extent is None:
             return None
-        layer = self._layer
-        if layer is None or not layer.isValid():
-            layer = self._coerce_raster_layer(self.iface.activeLayer())
-        if layer is None or not layer.isValid():
+        layer = self._resolve_raster_layer()
+        if layer is None:
             return None
         return self._active_mode.render(layer, self._extent, **self._render_kwargs())
 
@@ -1095,12 +1534,85 @@ class LensMapTool(QgsMapToolPan):
         self._recompute_extent()
         self._update_extent_band()
 
+        if self._active_mode.uses_async_render:
+            self._schedule_kpa_overlay_render()
+            return
+
         result = self._do_render()
         if result is None:
             return
         image = result[0]
         if image is not None:
             self._overlay.set_image(image)
+
+    def _ensure_kpa_process_thread(self) -> None:
+        if self._kpa_process_thread is not None:
+            return
+        thread = QThread(self)
+        worker = KpaProcessWorker()
+        worker.moveToThread(thread)
+        worker.finished.connect(self._on_kpa_process_finished)
+        thread.start()
+        self._kpa_process_thread = thread
+        self._kpa_process_worker = worker
+
+    def _schedule_kpa_overlay_render(self) -> None:
+        slc = self._read_kpa_slc_data()
+        if slc is None or slc.data_patch.size == 0 or slc.geo_corners is None:
+            return
+
+        a1, a2 = self._kpa_coefficients()
+        self._kpa_render_request_id += 1
+        request_id = self._kpa_render_request_id
+        self._kpa_pending_slc = slc
+        data_copy = np.array(slc.data_patch, copy=True)
+        self._ensure_kpa_process_thread()
+        worker = self._kpa_process_worker
+        if worker is None:
+            return
+        worker.requested.emit(
+            request_id,
+            data_copy,
+            slc.metadata,
+            a1,
+            a2,
+        )
+
+    def _on_kpa_process_finished(self, request_id: int, result: object) -> None:
+        if self._render_mode != "kpa" or request_id != self._kpa_render_request_id:
+            return
+        slc = self._kpa_pending_slc
+        if slc is None or self._overlay is None:
+            return
+        if not isinstance(result, np.ndarray) or result.size == 0:
+            return
+
+        img = render_georeferenced_data(
+            result,
+            slc.geo_corners or [],
+            slc.layer,
+            slc.extent,
+            "temp_kpa",
+            self.overlay_size,
+            self.canvas,
+        )
+        if img is not None:
+            self._overlay.set_image(img)
+
+    def _stop_kpa_process_thread(self) -> None:
+        self._kpa_render_request_id += 1
+        self._kpa_pending_slc = None
+        thread = self._kpa_process_thread
+        if thread is None:
+            return
+        if thread.isRunning():
+            thread.quit()
+            thread.wait(5000)
+        worker = self._kpa_process_worker
+        if worker is not None:
+            worker.deleteLater()
+        self._kpa_process_thread = None
+        self._kpa_process_worker = None
 
     def _update_position(self, pos: QPoint, *, clamp: bool = True) -> None:
         if self._overlay is None:
@@ -1118,7 +1630,9 @@ class LensMapTool(QgsMapToolPan):
             x = max(0, min(x, canvas_size.width() - self.overlay_size))
             y = max(0, min(y, canvas_size.height() - self.overlay_size))
 
+        self._overlay_pos = QPoint(x, y)
         self._overlay.setPos(QPointF(x, y))
+        self._update_kpa_controls_position(x, y)
 
     def _map_point_from_pos(self, pos: QPoint | None):
         if pos is None:
@@ -1135,6 +1649,8 @@ class LensMapTool(QgsMapToolPan):
         if not self._pinned:
             return
         self._schedule_render()
+        if self._render_mode == "kpa":
+            self._schedule_kpa_doppler_update()
 
     def _update_extent_band(self) -> None:
         if self._extent_band is None or self._extent is None:
@@ -1148,13 +1664,22 @@ class LensMapTool(QgsMapToolPan):
         if mode not in self._render_modes:
             mode = "normal"
         if mode == self._render_mode:
+            self._update_kpa_controls_visibility()
             return
+        previous_mode = self._render_mode
         new_mode = self._modes.get(mode, self._modes["normal"])
         self._active_mode.on_deactivated()
         self._render_mode = mode
         self._active_mode = new_mode
         self._active_mode.on_activated()
+        if previous_mode == "kpa":
+            self._kpa_render_request_id += 1
+            self._kpa_pending_slc = None
+        self._update_kpa_controls_visibility()
         self._schedule_render()
+        if mode == "kpa":
+            self._refresh_kpa_slider_scale()
+            self._schedule_kpa_doppler_update()
 
     def render_mode(self) -> str:
         """Return current render mode."""
@@ -1163,11 +1688,6 @@ class LensMapTool(QgsMapToolPan):
     def active_mode_uses_slc(self) -> bool:
         """Return True if the active render mode reads SLC patch data."""
         return self._render_mode in _SLC_RENDER_MODES
-
-
-def _tr(message: str) -> str:
-    """Translate message for ICEYE Toolbox context."""
-    return QCoreApplication.translate("ICEYE Toolbox", message)
 
 
 class LensToolbarAction:
@@ -1218,6 +1738,16 @@ class LensToolbarAction:
         normal_action.triggered.connect(lambda: self._set_lens_render_mode("normal"))
         self.lens_toolbar.addAction(normal_action)
         self.lens_render_actions["normal"] = normal_action
+
+        kpa_action = QAction(
+            QIcon(":/plugins/iceye_toolbox/kpa-focus.svg"),
+            _tr("Lens Render: KPA focus"),
+            self.iface.mainWindow(),
+        )
+        kpa_action.setStatusTip("Lens render mode: KPA Focus")
+        kpa_action.triggered.connect(lambda: self._set_lens_render_mode("kpa"))
+        self.lens_toolbar.addAction(kpa_action)
+        self.lens_render_actions["kpa"] = kpa_action
 
         spectrum_action = QAction(
             QIcon(
@@ -1335,6 +1865,7 @@ class LensToolbarAction:
         spectrum_action.setCheckable(True)
         spectrum_2d_action.setCheckable(True)
         color_action.setCheckable(True)
+        kpa_action.setCheckable(True)
 
         self.lens_render_mode_group = QActionGroup(self.iface.mainWindow())
         self.lens_render_mode_group.setExclusive(True)
@@ -1347,6 +1878,7 @@ class LensToolbarAction:
             action.setEnabled(False)
         self._spectrum_dropdown_btn.setEnabled(False)
         self._viewer_dropdown_btn.setEnabled(False)
+        self.lens_tool.kpa_controls.setEnabled(False)
 
         if self._toolbar_button_policy is not None:
             self._toolbar_button_policy.register(
@@ -1366,6 +1898,7 @@ class LensToolbarAction:
                 "color",
                 "azimuth_viewer",
                 "range_viewer",
+                "kpa",
             ):
                 self._toolbar_button_policy.register(
                     self.lens_render_actions[key],
@@ -1379,6 +1912,11 @@ class LensToolbarAction:
             )
             self._toolbar_button_policy.register(
                 self._viewer_dropdown_btn,
+                self._policy_lens_slc,
+                on_disable=self._on_slc_lens_policy_disabled,
+            )
+            self._toolbar_button_policy.register(
+                self.lens_tool.kpa_controls,
                 self._policy_lens_slc,
                 on_disable=self._on_slc_lens_policy_disabled,
             )
@@ -1464,6 +2002,7 @@ class LensToolbarAction:
                     action.setEnabled(True)
                 self._spectrum_dropdown_btn.setEnabled(True)
                 self._viewer_dropdown_btn.setEnabled(True)
+                self.lens_tool.kpa_controls.setEnabled(True)
             self._set_lens_render_mode("normal")
             return
 
@@ -1472,6 +2011,7 @@ class LensToolbarAction:
                 action.setEnabled(False)
             self._spectrum_dropdown_btn.setEnabled(False)
             self._viewer_dropdown_btn.setEnabled(False)
+            self.lens_tool.kpa_controls.setEnabled(False)
         else:
             self._toolbar_button_policy.refresh()
 
@@ -1495,6 +2035,7 @@ class LensToolbarAction:
             action.setEnabled(False)
         self._spectrum_dropdown_btn.setEnabled(False)
         self._viewer_dropdown_btn.setEnabled(False)
+        self.lens_tool.kpa_controls.setEnabled(False)
 
         if self._toolbar_button_policy is not None:
             self._toolbar_button_policy.refresh()

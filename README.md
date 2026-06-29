@@ -32,6 +32,7 @@ Exports the active raster layer to various formats: **TIFF** (direct copy), **PN
 Interactive magnifying lens over the map that follows the cursor or can be pinned with a click. Use the mouse wheel to zoom. Modes:
 
 - **Normal**: Standard map view of the active layer
+- **KPA**: Keystone phase algorithm mode. Applies keystone phase correction, then PGA autofocus on a narrow azimuth look. Use the **L** (linear) and **Q** (quadratic) sliders beside the lens to tune coefficients; a **Doppler Spectrum** popup shows the after-KPA azimuth spectrum, current coefficients, and an estimated ground velocity.
 - **Focus**: 1D PGA focusing
 - **2D Spectrum**: 2D FFT magnitude visualization
 - **Range Power Spectrum**: Range-axis FFT power visualization (selectable from the 2D Spectrum dropdown)
@@ -39,12 +40,12 @@ Interactive magnifying lens over the map that follows the cursor or can be pinne
 - **Sub-aperture Viewer**: Filters to a sub-aperture window in either the azimuth or range and renders the result. Scroll the mouse wheel or use Shift+↑ / Shift+↓ to slide the window through the apertures. Starts at the center aperture. Select azimuth or range from the dropdown.
 
 > [!WARNING]
-> The active layer must be selected in the Layers panel before activating the lens. Focus, 2D Spectrum, Range Power Spectrum, Color and Sub-aperture viewer modes read directly from the selected SLC layer — if no layer is selected or the wrong layer is active, the lens will show no output.
+> The active layer must be selected in the Layers panel before activating the lens. Focus, KPA, 2D Spectrum, Range Power Spectrum, Color and Sub-aperture viewer modes read directly from the selected layer — if no layer is selected or the wrong layer is active, the lens will show no output.
 
 > [!TIP]
-> Select a raster layer, then click the lens icon to activate. Move the cursor over the map — the lens follows. Click to pin the lens in place; click again to unpin. Use the mouse wheel to zoom in or out. Switch modes with the toolbar buttons (Normal, Focus, Color). The **2D Spectrum** button is a dropdown — click the arrow to choose between **2D Spectrum** and **Range Power Spectrum**; clicking the button face re-applies the last selected spectrum mode. The **Sub-aperture Viewer** button is a dropdown — click the arrow to choose between **Azimuth** and **Range**; in either mode the mouse wheel or Shift+↑ / Shift+↓ slides the look window through the band instead of zooming. Focus, 2D Spectrum, Range Power Spectrum, and Color require ICEYE SLC data with metadata.
+> Select a raster layer, then click the lens icon to activate. Move the cursor over the map — the lens follows. Click to pin the lens in place; click again to unpin. Use the mouse wheel to zoom in or out. Switch modes with the toolbar buttons (Normal, **KPA focus**, Focus, Color). In **KPA** mode, adjust the **L** and **Q** sliders next to the lens to tune phase correction; the lens overlay and **Doppler Spectrum** window update as you move them. The **2D Spectrum** button is a dropdown — click the arrow to choose between **2D Spectrum** and **Range Power Spectrum**; clicking the button face re-applies the last selected spectrum mode. The **Sub-aperture Viewer** button is a dropdown — click the arrow to choose between **Azimuth** and **Range**; in either mode the mouse wheel or Shift+↑ / Shift+↓ slides the look window through the band instead of zooming. Focus, KPA, 2D Spectrum, Range Power Spectrum, and Color require ICEYE SLC data with metadata.
 
-[lens-demo.webm](https://github.com/user-attachments/assets/23365b5d-8b6d-4289-84d9-738606436f86)
+[lens-demo.webm](https://github.com/user-attachments/assets/5ad796f3-3aa6-4ea9-9691-1192964e8187)
 
 #### Crop Tool
 
