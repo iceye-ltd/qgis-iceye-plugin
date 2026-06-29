@@ -1740,9 +1740,7 @@ class LensToolbarAction:
         self.lens_render_actions["normal"] = normal_action
 
         kpa_action = QAction(
-            QIcon(
-                ":/plugins/iceye_toolbox/focus-horizontal-round-round-840-svgrepo-com.svg"
-            ),
+            QIcon(":/plugins/iceye_toolbox/kpa-focus.svg"),
             _tr("Lens Render: KPA focus"),
             self.iface.mainWindow(),
         )
