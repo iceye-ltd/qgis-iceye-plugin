@@ -1,0 +1,43 @@
+---
+description: Keep comments on a single line; never stack successive comment lines
+alwaysApply: true
+---
+
+# Comment Style
+
+Multiple successive lines of `#` comments make code unreadable. Collapse them into a single line (or remove them entirely).
+
+## Rules
+
+- Never write two or more consecutive lines that start with `#` (ignoring leading whitespace).
+- If a comment needs more content, keep it on ONE line — even if that line is long.
+- Prefer no comment over a redundant/narrating one. Comments should only explain non-obvious intent, trade-offs, or constraints.
+- The shebang (`#!/usr/bin/env ...`) and the immediately following module docstring/encoding line are exempt.
+- This applies to inline `#` comments in Python, shell, YAML, etc. Docstrings (`"""..."""`) are unaffected.
+
+## Examples
+
+```python
+# ❌ BAD — stacked comment lines
+# Compute the shear-averaged spectrum by taking the FFT along azimuth,
+# multiplying by the window, and inverse-transforming. This block also
+# handles the wrap-around and normalizes by the coherent sum.
+S = np.fft.ifft(np.fft.fft(x, axis=0) * w, axis=0)
+```
+
+```python
+# ✅ GOOD — single line
+# Shear-averaged spectrum: FFT(az) * window, then IFFT, normalized by coherent sum.
+S = np.fft.ifft(np.fft.fft(x, axis=0) * w, axis=0)
+```
+
+```python
+# ✅ GOOD — no comment when the code is self-explanatory
+S = np.fft.ifft(np.fft.fft(x, axis=0) * w, axis=0)
+```
+
+## When updating existing code
+
+- Merge adjacent comment lines into one line, keeping only the essential meaning.
+- Delete narration comments that only restate what the next line of code does.
+- Keep comments that explain *why*, not *what*.

@@ -287,6 +287,22 @@ class CropLayerTask(QgsTask):
 
             out_dataset.SetMetadata(properties, "ICEYE_PROPERTIES")
 
+            # gdal:translate strips per-band metadata (including the "NAME"
+            # key that read_slc_layer relies on to identify amplitude/phase).
+            # Copy band-level metadata and descriptions back from the source.
+            band_count = min(
+                input_dataset.RasterCount, out_dataset.RasterCount
+            )
+            for band_idx in range(1, band_count + 1):
+                in_band = input_dataset.GetRasterBand(band_idx)
+                out_band = out_dataset.GetRasterBand(band_idx)
+                in_description = in_band.GetDescription()
+                if in_description:
+                    out_band.SetDescription(in_description)
+                in_band_metadata = in_band.GetMetadata()
+                if in_band_metadata:
+                    out_band.SetMetadata(in_band_metadata)
+
         except Exception as e:
             QgsMessageLog.logMessage(
                 f"Error in setting metadata: {str(e)}",

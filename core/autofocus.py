@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from datetime import datetime
 from pathlib import Path
 from typing import Callable
 
@@ -251,6 +252,37 @@ class AutofocusTask(QgsTask):
             "ICEYE Toolbox",
             Qgis.MessageLevel.Info,
         )
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S_%f")
+        out_path = (
+            f"/home/odogan/Desktop/ship_focusing/4439676/patches/data_{timestamp}.npz"
+        )
+        try:
+            np.savez(
+                out_path,
+                data=data,
+                sar_resolution_range=metadata.sar_resolution_range,
+                sar_resolution_azimuth=metadata.sar_resolution_azimuth,
+                sar_pixel_spacing_range=metadata.sar_pixel_spacing_range,
+                sar_pixel_spacing_azimuth=metadata.sar_pixel_spacing_azimuth,
+                iceye_acquisition_prf=metadata.iceye_acquisition_prf,
+                start_datetime=metadata.start_datetime,
+                end_datetime=metadata.end_datetime,
+            )
+            QgsMessageLog.logMessage(
+                f"Saved patch: {out_path}",
+                "ICEYE Toolbox",
+                Qgis.MessageLevel.Info,
+            )
+        except Exception as e:
+            QgsMessageLog.logMessage(
+                f"Failed to save patch {out_path}: {e!s}",
+                "ICEYE Toolbox",
+                Qgis.MessageLevel.Critical,
+            )
+            return False
+
+        # Skip focusing: we only care about saving the patch for now.
+        return True
 
         try:
             QgsMessageLog.logMessage(

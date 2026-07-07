@@ -1,0 +1,51 @@
+---
+description: Never copy the full-scene SLC `s`; mutate it in place instead
+alwaysApply: true
+---
+
+# Never Copy `s`
+
+The full-scene SLC array `s` in `scripts/shear_averaging.py` is huge — for a typical ICEYE scene it is `complex64` of shape ~`(72_000, 27_000)` ≈ **15+ GB**. Duplicating it (via `.copy()`, `np.array(s)`, `s.astype(...)` without `copy=False`, `np.abs(s)` when a rebind would suffice, etc.) doubles peak RSS and reliably OOM-kills the process (and often the desktop shell / IDE with it).
+
+## Rules
+
+- **Never call `s.copy()`, `np.array(s)`, `deepcopy(s)`, or any other operation that materialises a second full-scene buffer.** This includes companion arrays that hold "a modified version of `s`" such as `s_with_corrected = s.copy()`.
+- If you need to build an "after" view of the scene (e.g. AF-corrected chips pasted in), **mutate `s` in place**. Order the render/save calls so the "before" figures are written before the mutation and the "after" figures after.
+- To go from complex SLC to real amplitude for plotting, **rebind** rather than double-buffer:
+
+  ```python
+  s = np.abs(s)   # frees the old complex64 buffer once no reference remains
+  ```
+
+  Do this **once**, at the end of the pipeline after PGA/autofocus has finished with the complex data. From that point on `s` is `float32` amplitude.
+- Any helper that eventually calls `matplotlib`'s `imshow` on `s` must **accept real-valued input without a second copy**. `_show_slc(...)` already skips `np.abs` when the input is already real; keep it that way.
+- Same rule applies to sibling scene-sized arrays (`s_degraded`, etc.) — never duplicate them, free them when done, and pass `copy=False` when a dtype cast is unavoidable.
+- If you legitimately need a downsampled view for a big overview figure, produce a **small** decimated array (e.g. `s[::step_y, ::step_x]`) — that is fine because the result is orders of magnitude smaller than `s`.
+
+## Why
+
+- `s` at `complex64 (72000, 27000)` = 15.6 GB.
+- `s.copy()` at the same shape = another 15.6 GB.
+- Add `np.abs(s)` (float32) copies from each `imshow` call and the process crosses the 100 GB / 125 GB RAM ceiling, spills to swap, and gets `SIGKILL`ed by the OOM killer. The Python traceback never lands because it is a kernel kill, not an exception.
+
+## Examples
+
+```python
+# BAD — duplicates 15+ GB
+s_with_corrected = s.copy()
+for y0, y1, x0, x1, chip in af_kept_chip_data:
+    s_with_corrected[y0:y1, x0:x1] = chip
+_show_slc(ax_before, s, ...)
+_show_slc(ax_after,  s_with_corrected, ...)
+```
+
+```python
+# GOOD — one buffer, mutated in place between the two savefigs
+s = np.abs(s)                                # complex64 -> float32, no second full-scene copy
+_show_slc(ax_before, s, ...)
+fig_before.savefig(...); _maybe_close(fig_before)
+for y0, y1, x0, x1, chip in af_kept_chip_data:
+    s[y0:y1, x0:x1] = np.abs(chip).astype(s.dtype, copy=False)
+_show_slc(ax_after, s, ...)
+fig_after.savefig(...); _maybe_close(fig_after)
+```
