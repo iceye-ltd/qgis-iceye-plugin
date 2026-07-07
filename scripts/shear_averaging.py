@@ -1122,6 +1122,39 @@ def _overlay_boxes(
         ax.add_patch(rect)
 
 
+def _rotate_boxes_cw90(boxes_yxhw: np.ndarray, h_orig: int) -> np.ndarray:
+    """Map (y_c, x_c, h, w) boxes into the 90°-clockwise-rotated display frame.
+
+    Boxes elsewhere in the pipeline use the convention ``y_c = y_lo + h // 2``,
+    which is asymmetric for even ``h`` (``y_c`` lands on the pixel just below
+    the true centre). Under a ``s.T[:, ::-1]`` display view (a strided view =
+    90° CW rotation of an ``(h_orig, w_orig)`` image), the pixel set
+    ``{y_lo..y_hi} × {x_lo..x_hi}`` maps to ``{x_lo..x_hi} × {h_orig-1-y_hi ..
+    h_orig-1-y_lo}``. Re-encoding that rotated pixel set back into the same
+    ``y_c = y_lo + h // 2`` convention gives:
+
+        y_c_r = x_c
+        x_c_r = h_orig - y_c - (h % 2)   # -0 for even h, -1 for odd h
+        h_r   = w
+        w_r   = h
+
+    The ``h % 2`` term is what compensates for the asymmetric-centre bias:
+    without it, odd-``h`` boxes drift by one pixel in the rotated frame. The
+    returned float64 ``(K, 4)`` array can be passed straight to
+    ``_overlay_boxes`` on the rotated axes.
+    """
+    boxes = np.atleast_2d(np.asarray(boxes_yxhw)).astype(np.float64, copy=True)
+    y = boxes[:, 0].copy()
+    x = boxes[:, 1].copy()
+    h = boxes[:, 2].copy()
+    w = boxes[:, 3].copy()
+    boxes[:, 0] = x
+    boxes[:, 1] = float(h_orig) - y - np.mod(h, 2.0)
+    boxes[:, 2] = w
+    boxes[:, 3] = h
+    return boxes
+
+
 def merge_overlapping_boxes(boxes_yxhw: np.ndarray) -> np.ndarray:
     """Merge any axis-aligned boxes whose rectangles intersect.
 
@@ -7079,19 +7112,24 @@ def main() -> None:
                 _maybe_close(fig_af_boxes)
                 print(f"Saved → {path_af_boxes}")
 
-            # --- High-DPI "before" panel --- Captures vmin/vmax so the "after" panel reuses the same amplitude clip and the visible jump inside each red/yellow rectangle reflects real focusing gain, not per-figure rescaling. Keeper: always saved (one of the three files retained in minimal mode).
+            # --- High-DPI "before" panel (rotated 90° CW for display) --- Captures vmin/vmax so the "after" panel reuses the same amplitude clip and the visible jump inside each red/yellow rectangle reflects real focusing gain, not per-figure rescaling. The rendered image is rotated 90° clockwise: `s.T[:, ::-1]` is a strided *view* of `s` (no data copy — see rule "never copy s"), and `_rotate_boxes_cw90` remaps the box (y, x, h, w) tuples into the same rotated display frame so every red/yellow rectangle stays glued to its target. Figsize is transposed so the on-canvas aspect matches the rotated scene, and axis labels are swapped (azimuth is now horizontal, range vertical) after `_show_slc` writes its default un-rotated labels. Keeper: always saved (one of the three files retained in minimal mode).
             path_af_before = save_dir / f"{stem}_af_before.png"
+            h_orig_af = int(s.shape[0])
+            s_view_rot_cw = s.T[:, ::-1]
             fig_af_before, ax_af_before = plt.subplots(
-                figsize=(16, 14), constrained_layout=True,
+                figsize=(14, 16), constrained_layout=True,
             )
             vmin_shared, vmax_shared = _show_slc(
-                ax_af_before, s,
+                ax_af_before, s_view_rot_cw,
                 "Input SAR image and MTI (unfocused)",
                 cmap="gray", sigma=3.0,
             )
+            ax_af_before.set_xlabel("azimuth pixel")
+            ax_af_before.set_ylabel("range pixel")
             if len(af_boxes_arr):
                 _overlay_boxes(
-                    ax_af_before, af_boxes_arr,
+                    ax_af_before,
+                    _rotate_boxes_cw90(af_boxes_arr, h_orig_af),
                     color="red", lw=0.7,
                     signs=af_kept_best_dev_arr,
                 )
@@ -7138,20 +7176,24 @@ def main() -> None:
                 _maybe_close(fig_af_corr)
                 print(f"Saved → {path_af_corrected}")
 
-            # --- High-DPI "after" panel --- Reuses `vmin_shared` / `vmax_shared` captured on the "before" panel. Keeper: always saved (one of the three files retained in minimal mode).
+            # --- High-DPI "after" panel (rotated 90° CW for display) --- Reuses `vmin_shared` / `vmax_shared` captured on the "before" panel so the two keepers stay directly comparable. Same rotation trick as `af_before`: `s.T[:, ::-1]` is a strided *view* of the post-paste `s` (no copy — rule "never copy s"), boxes go through `_rotate_boxes_cw90`, figsize is transposed and axis labels are swapped after `_show_slc` writes its un-rotated defaults. Keeper: always saved (one of the three files retained in minimal mode).
             path_af_after = save_dir / f"{stem}_af_after.png"
+            s_view_rot_cw = s.T[:, ::-1]
             fig_af_after, ax_af_after = plt.subplots(
-                figsize=(16, 14), constrained_layout=True,
+                figsize=(14, 16), constrained_layout=True,
             )
             _show_slc(
-                ax_af_after, s,
+                ax_af_after, s_view_rot_cw,
                 "Input SAR image with focused moving targets",
                 vmin=vmin_shared, vmax=vmax_shared,
                 cmap="gray",
             )
+            ax_af_after.set_xlabel("azimuth pixel")
+            ax_af_after.set_ylabel("range pixel")
             if len(af_boxes_arr):
                 _overlay_boxes(
-                    ax_af_after, af_boxes_arr,
+                    ax_af_after,
+                    _rotate_boxes_cw90(af_boxes_arr, h_orig_af),
                     color="red", lw=0.7,
                     signs=af_kept_best_dev_arr,
                 )
