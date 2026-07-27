@@ -159,7 +159,10 @@ def _load_config(path: Path) -> SimpleNamespace:
         if flat.get(key) is not None:
             flat[key] = Path(str(flat[key])).expanduser()
 
-    flat["save"] = _resolve_save_field(flat.get("save"), flat.get("save_dir"))
+    _raw_save = flat.get("save")
+    flat["save"] = _resolve_save_field(_raw_save, flat.get("save_dir"))
+    # Preserve the raw `save` string so CLI-input overrides can re-anchor the auto-save location (see the `_CLI_INPUT_PATH` handler below). The `save` field itself has already been resolved to a Path or None.
+    flat["_save_raw"] = _raw_save
 
     return SimpleNamespace(**flat)
 
@@ -174,6 +177,9 @@ _CFG: SimpleNamespace = _load_config(_CFG_PATH)
 # CLI overrides applied on top of the JSON defaults so scene-specific runs don't need a bespoke config file. `input.path` accepts any non-.json positional arg; `output.save` accepts `--save <path>` (with `auto` / `null` / `--no-save` shortcuts).
 if _CLI_INPUT_PATH is not None:
     _CFG.path = _CLI_INPUT_PATH
+    # When the user supplies a scene path on the CLI and hasn't pinned `--save` explicitly, drop outputs next to that scene (`input.parent`) rather than the JSON-baked `output.save_dir` — otherwise every CLI run lands in the historical dev scene folder.
+    if _CLI_SAVE is None and getattr(_CFG, "_save_raw", None) == "auto":
+        _CFG.save = _resolve_save_field("auto", _CLI_INPUT_PATH.parent)
 if _CLI_SAVE is not None:
     _CFG.save = _resolve_save_field(_CLI_SAVE, getattr(_CFG, "save_dir", None))
 _SHOW_FIGURES: bool = bool(_CFG.show)
@@ -1937,8 +1943,45 @@ def _show_slc(
     ax.set_title(title)
     ax.set_xlabel("range pixel")
     ax.set_ylabel("azimuth pixel")
-    plt.colorbar(im, ax=ax, label="|s|")
+    # Use the axes' own figure (never `plt.gcf()`) so figures populated LATER than they were created — e.g. the main scene overview, opened at 5100 but only filled in after 3 other diagnostic figures have been made — don't spam matplotlib's "Adding colorbar to a different Figure than fig.colorbar is called on" warning and don't accidentally paint the colorbar onto the wrong canvas.
+    ax.figure.colorbar(im, ax=ax, label="|s|")
     return float(vmin), float(vmax)
+
+
+def _show_slc_rot_cw90(
+    ax: plt.Axes,
+    s: np.ndarray,
+    title: str,
+    sigma: float = 4.0,
+    vmin: float | None = None,
+    vmax: float | None = None,
+    cmap: str = "viridis",
+    max_display_pixels: int = 60_000_000,
+) -> tuple[float, float, int]:
+    """Show `s` rotated 90° CW (`s.T[:, ::-1]`) with swapped axis labels.
+
+    Every scene-scale PNG the pipeline writes goes through this wrapper so all
+    diagnostic outputs share the same landscape orientation as the
+    ``af_before`` / ``af_after`` keepers. ``s.T[:, ::-1]`` is a strided view
+    of ``s`` (no data copy — rule "never copy s"). Overlay callers must map
+    their (y, x, h, w) box arrays through ``_rotate_boxes_cw90(boxes, h_orig)``
+    before ``_overlay_boxes``; scatter callers with raw ``(y, x)`` coords must
+    plot ``(h_orig - 1 - y, x)`` to land on the rotated pixel.
+
+    Returns ``(vmin, vmax, h_orig)`` — the clip actually used plus the
+    original (un-rotated) row count so callers can hand it to the rotation
+    helpers without recomputing ``s.shape[0]``.
+    """
+    h_orig = int(s.shape[0])
+    view = s.T[:, ::-1]
+    vmin_used, vmax_used = _show_slc(
+        ax, view, title,
+        sigma=sigma, vmin=vmin, vmax=vmax,
+        cmap=cmap, max_display_pixels=max_display_pixels,
+    )
+    ax.set_xlabel("azimuth pixel")
+    ax.set_ylabel("range pixel")
+    return vmin_used, vmax_used, h_orig
 
 
 def _show_phase_derivative(ax: plt.Axes, d: np.ndarray, title: str) -> None:
@@ -1947,7 +1990,7 @@ def _show_phase_derivative(ax: plt.Axes, d: np.ndarray, title: str) -> None:
     ax.set_title(title)
     ax.set_xlabel("range pixel")
     ax.set_ylabel("azimuth pixel")
-    plt.colorbar(im, ax=ax, label="rad")
+    ax.figure.colorbar(im, ax=ax, label="rad")
 
 
 def _show_detection_map(ax: plt.Axes, det: np.ndarray, title: str) -> None:
@@ -1957,7 +2000,7 @@ def _show_detection_map(ax: plt.Axes, det: np.ndarray, title: str) -> None:
     ax.set_title(title)
     ax.set_xlabel("range pixel")
     ax.set_ylabel("azimuth pixel")
-    plt.colorbar(im, ax=ax, label="detection score")
+    ax.figure.colorbar(im, ax=ax, label="detection score")
 
 
 def _show_image_domain_phase_derivative(ax: plt.Axes, s: np.ndarray) -> None:
@@ -2934,7 +2977,9 @@ def filter_nested_boxes(
 
 
 # --------------------------------------------------------------------------- Main ---------------------------------------------------------------------------
-def compute_subapertures(s: np.ndarray, N: int = 8) -> np.ndarray:
+def compute_subapertures(
+    s: np.ndarray, N: int = 8, skip_edges: bool = True,
+) -> np.ndarray:
     """Split SLC into N azimuth subapertures and return their amplitudes.
 
     Parameters
@@ -2942,12 +2987,24 @@ def compute_subapertures(s: np.ndarray, N: int = 8) -> np.ndarray:
     s : complex ndarray, shape (N_az, N_range)
         Input SLC. Axis 0 = azimuth (spatial), axis 1 = range.
     N : int
-        Number of subapertures to split into.
+        Number of subapertures to split the azimuth spectrum into.
+    skip_edges : bool, default True
+        Drop the k=0 (most negative Doppler) and k=N-1 (most positive
+        Doppler) sub-bands from the returned stack. On ICEYE SLCs these
+        edge bands sit outside the useful azimuth-antenna beam and are
+        pure noise / spectral roll-off, so including them in
+        ``sub_mean`` / ``sub_var`` / per-box COM statistics only adds
+        noise. Setting this to ``False`` restores the raw ``N``-band
+        behaviour.
 
     Returns
     -------
-    amplitudes : real ndarray, shape (N, N_az // N, N_range)
-        Amplitude of each subaperture image.
+    amplitudes : real ndarray, shape (M, N_az // N, N_range)
+        Amplitude of each retained subaperture. ``M = N - 2`` when
+        ``skip_edges`` is True, otherwise ``M = N``. The per-band
+        azimuth width ``sub_size = N_az // N`` is set by the full split
+        and is independent of ``skip_edges``, so downstream projections
+        ``sub_row · N == s_row`` remain valid.
     """
     N_az = s.shape[0]
     sub_size = N_az // N
@@ -2958,12 +3015,19 @@ def compute_subapertures(s: np.ndarray, N: int = 8) -> np.ndarray:
         fft_dtype, copy=False,
     )
 
+    # Drop the noisy edge bands (k=0 and k=N-1) at allocation time rather than post-hoc so the returned buffer is `(M, sub_size, N_rg)` in the first place. Skip requires N >= 3 to leave at least one usable band; below that we transparently fall back to keeping every band.
+    if skip_edges and N >= 3:
+        k_start, k_stop = 1, N - 1
+    else:
+        k_start, k_stop = 0, N
+    M = k_stop - k_start
+
     # float32 amplitudes: `|complex64|` naturally lands in float32, and storing 8×(sub_size × N_range) at float64 is a ≈3 GB persistent-alive allocation on a full ICEYE scene. Keep it at float32 so `amplitudes` is ≈1.5 GB and downstream `sub_mean` / `sub_var` stay float32 too.
-    amplitudes = np.zeros((N, sub_size, s.shape[1]), dtype=np.float32)
-    for k in range(N):
+    amplitudes = np.zeros((M, sub_size, s.shape[1]), dtype=np.float32)
+    for out_i, k in enumerate(range(k_start, k_stop)):
         band = S[k * sub_size:(k + 1) * sub_size]
         s_sub = np.fft.ifft(band, axis=0)
-        amplitudes[k] = np.abs(s_sub).astype(np.float32, copy=False)
+        amplitudes[out_i] = np.abs(s_sub).astype(np.float32, copy=False)
 
     # Free the ≈7.5 GB range/azimuth spectrum before the caller sees `amplitudes`; the rest of the pipeline never needs `S` again.
     del S
@@ -4849,7 +4913,8 @@ def main() -> None:
     )
     
    
-    subapertures = compute_subapertures(s_degraded, N_subaperture)  # (N, sub_size, N_rg)
+    # `compute_subapertures` splits the azimuth spectrum into `N_subaperture` bands and by default drops the first (k=0, most negative Doppler) and last (k=N-1, most positive Doppler) — on ICEYE SLCs those edge bands sit outside the useful antenna beam and are pure noise, and letting them into `sub_mean` / `sub_var` / per-box COM stats only degrades detection. The returned stack therefore has shape `(N_subaperture - 2, sub_size, N_rg)`; `sub_size = N_az_s_degraded // N_subaperture` is set by the full split so `N_subaperture` remains the correct row-projection factor between the sub-grid and `s_degraded`. Linear (LS + Theil-Sen) COM fits use `subapertures.shape[0]` to build the time axis and are slope-invariant to the constant time offset introduced by dropping the edges.
+    subapertures = compute_subapertures(s_degraded, N_subaperture)  # (N_subaperture - 2, sub_size, N_rg)
     sub_mean = subapertures.mean(axis=0)                            # (sub_size, N_rg)
     sub_var = subapertures.var(axis=0)                              # (sub_size, N_rg)
 
@@ -4897,7 +4962,7 @@ def main() -> None:
         else:
             _boxes_dec_yxhw = np.empty((0, 4), dtype=np.int64)
         fig_sub_mean_boxes, _ax_sub_mean = plt.subplots(
-            1, 1, figsize=(14, 9), constrained_layout=True,
+            1, 1, figsize=(9, 14), constrained_layout=True,
         )
         fig_sub_mean_boxes.suptitle(
             f"sub_mean + cluster_targets boxes — {cfg.path.name}",
@@ -4907,16 +4972,24 @@ def main() -> None:
         _sd = float(sub_mean.std())
         _vmin = max(0.0, _mu - 4.0 * _sd)
         _vmax = min(float(sub_mean.max()), _mu + 4.0 * _sd)
+        # Rotated 90° CW (`sub_mean.T[:, ::-1]`) so every scene-scale PNG shares the same landscape orientation as the `af_before` / `af_after` keepers. `extent` is kept in full-resolution rotated pixel units so overlay boxes and the seed-peak scatter can be mapped from the un-rotated (y, x) frame with `_rotate_boxes_cw90(..., h_orig)` and `(h_orig - 1 - y, x)` respectively.
+        h_orig_sm = int(sub_mean.shape[0])
+        _sub_mean_rot = sub_mean.T[:, ::-1]
+        _sm_H, _sm_W = _sub_mean_rot.shape
         _im = _ax_sub_mean.imshow(
-            sub_mean, cmap="viridis", aspect="auto",
+            _sub_mean_rot, cmap="viridis", aspect="auto",
             vmin=_vmin, vmax=_vmax,
+            extent=(0.0, float(_sm_W), float(_sm_H), 0.0),
         )
-        _overlay_boxes(
-            _ax_sub_mean, _boxes_dec_yxhw, color="cyan", lw=1.0,
-        )
+        if len(_boxes_dec_yxhw):
+            _overlay_boxes(
+                _ax_sub_mean,
+                _rotate_boxes_cw90(_boxes_dec_yxhw, h_orig_sm),
+                color="cyan", lw=1.0,
+            )
         if len(peaks_yx):
             _ax_sub_mean.scatter(
-                peaks_yx[:, 1], peaks_yx[:, 0],
+                h_orig_sm - 1 - peaks_yx[:, 0], peaks_yx[:, 1],
                 s=10, marker="x", c="red", linewidths=0.6,
                 label=f"seed peaks ({len(peaks_yx)})",
             )
@@ -4927,11 +5000,11 @@ def main() -> None:
             f"{len(_boxes_dec_yxhw)} cluster_targets boxes (cyan), "
             f"{len(peaks_yx)} seed peaks (red ×)"
         )
-        _ax_sub_mean.set_xlabel("range pixel (decimated)")
-        _ax_sub_mean.set_ylabel(
+        _ax_sub_mean.set_xlabel(
             f"azimuth pixel (decimated, ×{N_subaperture} = s_degraded row)"
         )
-        plt.colorbar(_im, ax=_ax_sub_mean, label="mean |s| over N_sub")
+        _ax_sub_mean.set_ylabel("range pixel (decimated)")
+        fig_sub_mean_boxes.colorbar(_im, ax=_ax_sub_mean, label="mean |s| over N_sub")
     else:
         fig_sub_mean_boxes = None
 
@@ -5031,8 +5104,9 @@ def main() -> None:
     # --- Main figure canvas (populated further below) ------------------
     # Skipped in minimal mode (`cfg.debug=False`) — the overview panel is a diagnostic artefact. Downstream population + save calls guard on `fig is not None` so they no-op cleanly.
     if _save_all:
+        # 2×1 stacked (was 1×2 side-by-side) so each rotated (landscape) panel gets a landscape figure slot too. Rotation matches `af_before` / `af_after` keepers so every scene-scale PNG shares the same orientation.
         fig, (ax_main, ax_bdy) = plt.subplots(
-            1, 2, figsize=(20, 9), constrained_layout=True,
+            2, 1, figsize=(14, 18), constrained_layout=True,
         )
         fig.suptitle(
             f"SAR moving target detection — {cfg.path.name}",
@@ -5124,22 +5198,25 @@ def main() -> None:
     # Skipped in minimal mode (`cfg.debug=False`) — this is a diagnostic-only artefact.
     if _save_all and cfg.save is not None:
         fig_slc_boxes, _ax_slc_boxes = plt.subplots(
-            1, 1, figsize=(14, 9), constrained_layout=True,
+            1, 1, figsize=(9, 14), constrained_layout=True,
         )
         fig_slc_boxes.suptitle(
             f"|s_degraded| + boxes after phase-slope + residual filters "
             f"— {cfg.path.name}",
             fontsize=11,
         )
-        _show_slc(
+        _, _, h_orig_slc_res = _show_slc_rot_cw90(
             _ax_slc_boxes, s_degraded,
             f"|s_degraded|: {n_after_residual} boxes surviving phase-slope "
             f"(min={cfg.min_slope_deg:g}°/row) + phase-residual "
             f"(max={cfg.max_phase_residual_rad:g} rad) filters",
         )
-        _overlay_boxes(
-            _ax_slc_boxes, boxes_yxhw, color="cyan", lw=1.0,
-        )
+        if len(boxes_yxhw):
+            _overlay_boxes(
+                _ax_slc_boxes,
+                _rotate_boxes_cw90(boxes_yxhw, h_orig_slc_res),
+                color="cyan", lw=1.0,
+            )
     else:
         fig_slc_boxes = None
 
@@ -5305,12 +5382,15 @@ def main() -> None:
         _r_p99 = _pct(com_ts_res_m, _r_finite, 99)
         _n_fin_az_med = int(np.median(com_ts_n_fin_az))
         _n_fin_rg_med = int(np.median(com_ts_n_fin_rg))
+        _n_sub_used = int(com_az_sub.shape[1])
         print("  COM Theil-Sen fit (diagnostic; does not gate):")
         print(
             f"    finite subs per box: median az={_n_fin_az_med}/"
-            f"{N_subaperture}, rg={_n_fin_rg_med}/{N_subaperture}   "
-            f"({int(_v_finite.sum())}/{len(boxes_yxhw)} boxes have a "
-            f"finite |v|_fit, {int(_r_finite.sum())} a finite residual)"
+            f"{_n_sub_used}, rg={_n_fin_rg_med}/{_n_sub_used}   "
+            f"(of {N_subaperture} split bands, k=0 and k={N_subaperture-1} "
+            f"dropped as noise; {int(_v_finite.sum())}/{len(boxes_yxhw)} "
+            f"boxes have a finite |v|_fit, {int(_r_finite.sum())} a finite "
+            f"residual)"
         )
         print(
             f"    |v|_fit m/s : p50={_v_p50:.2f}, p90={_v_p90:.2f}, "
@@ -5762,7 +5842,7 @@ def main() -> None:
     # Skipped in minimal mode (`cfg.debug=False`) — this is a diagnostic-only artefact.
     if _save_all and cfg.save is not None:
         fig_final_boxes, _ax_final_boxes = plt.subplots(
-            1, 1, figsize=(14, 9), constrained_layout=True,
+            1, 1, figsize=(9, 14), constrained_layout=True,
         )
         fig_final_boxes.suptitle(
             f"|s_degraded| + final filtered boxes — {cfg.path.name}",
@@ -5770,7 +5850,7 @@ def main() -> None:
         )
         _n_strong_final = int(strong_mask.sum()) if len(boxes_yxhw) else 0
         _n_weak_final = int((~strong_mask).sum()) if len(boxes_yxhw) else 0
-        _show_slc(
+        _, _, h_orig_final = _show_slc_rot_cw90(
             _ax_final_boxes, s_degraded,
             f"|s_degraded|: {len(boxes_yxhw)} final surviving boxes "
             f"(strong |slope·n| ≥ {cfg.slope_rad_thresh:g} rad: "
@@ -5779,11 +5859,15 @@ def main() -> None:
         )
         if len(weak_boxes):
             _overlay_boxes(
-                _ax_final_boxes, weak_boxes, color="cyan", lw=1.0,
+                _ax_final_boxes,
+                _rotate_boxes_cw90(weak_boxes, h_orig_final),
+                color="cyan", lw=1.0,
             )
         if len(strong_boxes):
             _overlay_boxes(
-                _ax_final_boxes, strong_boxes, color="red", lw=1.4,
+                _ax_final_boxes,
+                _rotate_boxes_cw90(strong_boxes, h_orig_final),
+                color="red", lw=1.4,
             )
     else:
         fig_final_boxes = None
@@ -5816,14 +5900,14 @@ def main() -> None:
             boxes_eliminated = np.empty((0, 4), dtype=np.int64)
 
         fig_kept_vs_eliminated, _ax_kve = plt.subplots(
-            1, 1, figsize=(14, 9), constrained_layout=True,
+            1, 1, figsize=(9, 14), constrained_layout=True,
         )
         fig_kept_vs_eliminated.suptitle(
             f"|s_degraded| — kept (cyan) vs eliminated (red) — "
             f"{cfg.path.name}",
             fontsize=11,
         )
-        _show_slc(
+        _, _, h_orig_kve = _show_slc_rot_cw90(
             _ax_kve, s_degraded,
             f"|s_degraded|: {len(boxes_yxhw)} kept (cyan) / "
             f"{len(boxes_eliminated)} eliminated (red) out of "
@@ -5832,11 +5916,15 @@ def main() -> None:
         # Draw eliminated first so kept sits on top when they touch.
         if len(boxes_eliminated):
             _overlay_boxes(
-                _ax_kve, boxes_eliminated, color="red", lw=0.9,
+                _ax_kve,
+                _rotate_boxes_cw90(boxes_eliminated, h_orig_kve),
+                color="red", lw=0.9,
             )
         if len(boxes_yxhw):
             _overlay_boxes(
-                _ax_kve, boxes_yxhw, color="cyan", lw=1.1,
+                _ax_kve,
+                _rotate_boxes_cw90(boxes_yxhw, h_orig_kve),
+                color="cyan", lw=1.1,
             )
         # Manual legend proxies — `_overlay_boxes` uses raw
         # `plt.Rectangle` patches that don't feed matplotlib's
@@ -6007,20 +6095,31 @@ def main() -> None:
     # Main figure panels — both in s_degraded pixel coords, so the strong-box overlay uses the box arrays as-is (no Number_of_Range_- Looks rescaling needed). Left: range-degraded SLC amplitude. Right: boundary_box peak map (one peak per dense detection cluster — the inputs to grow_and_recenter_boxes).
     # In minimal mode (`cfg.debug=False`) the main figure was never built (`ax_main` / `ax_bdy` are None), so skip the population.
     if fig is not None:
-        _show_slc(
+        # Both panels share the same s_degraded grid, so a single `h_orig` maps the strong-box overlays on both axes.
+        _, _, h_orig_main = _show_slc_rot_cw90(
             ax_main, s_degraded,
             f"|s_degraded| (range-degraded SLC): "
             f"{n_strong}/{len(boxes_yxhw)} boxes "
             f"|slope·n| > {cfg.slope_rad_thresh:g} rad",
         )
-        _overlay_boxes(ax_main, strong_boxes, color="red", lw=1.4)
+        if len(strong_boxes):
+            _overlay_boxes(
+                ax_main,
+                _rotate_boxes_cw90(strong_boxes, h_orig_main),
+                color="red", lw=1.4,
+            )
 
-        _show_slc(
+        _show_slc_rot_cw90(
             ax_bdy, boundary_box,
             f"boundary_box (peak per dense cluster): "
             f"{int(boundary_box.sum())} peaks",
         )
-        _overlay_boxes(ax_bdy, strong_boxes, color="red", lw=1.4)
+        if len(strong_boxes):
+            _overlay_boxes(
+                ax_bdy,
+                _rotate_boxes_cw90(strong_boxes, h_orig_main),
+                color="red", lw=1.4,
+            )
 
     # The d_phase panel of the old 2×3 layout is disabled to keep the main figure light. Re-enable by restoring `plt.subplots(2, 3, …)` above and uncommenting this block. _show_phase_derivative(     axes[1, 1], d_phase,     f"d_phase (degraded): {n_strong}/{len(boxes_yxhw)} boxes "     f"|slope·n| > {cfg.slope_rad_thresh:g} rad", ) _overlay_boxes(axes[1, 1], strong_boxes, color="red", lw=1.4)
 
@@ -7091,20 +7190,21 @@ def main() -> None:
                 f"(peak = {_rss_peak_post_abs:.2f} GB)"
             )
 
-            # --- Full image with boundary boxes (before AF paste) --- `{stem}_af_boxes.png`: `|s|` (grayscale) with the bounding rectangles of every box that survived the `|best_deviation| ≥ af_min_abs_deviation` autofocus gate, coloured red for positive `best_deviation` and yellow for negative. Diagnostic — gated behind `_save_all`.
+            # --- Full image with boundary boxes (before AF paste) --- `{stem}_af_boxes.png`: `|s|` (grayscale) with the bounding rectangles of every box that survived the `|best_deviation| ≥ af_min_abs_deviation` autofocus gate, coloured red for positive `best_deviation` and yellow for negative. Rotated 90° CW so the orientation matches `af_before` / `af_after`. Diagnostic — gated behind `_save_all`.
             if _save_all:
                 path_af_boxes = save_dir / f"{stem}_af_boxes.png"
                 fig_af_boxes, ax_af_boxes = plt.subplots(
-                    figsize=(11, 9), constrained_layout=True,
+                    figsize=(9, 11), constrained_layout=True,
                 )
-                _show_slc(
+                _, _, h_orig_af_boxes = _show_slc_rot_cw90(
                     ax_af_boxes, s,
                     "Input SAR image and MTI",
                     cmap="gray", sigma=3.0,
                 )
                 if len(af_boxes_arr):
                     _overlay_boxes(
-                        ax_af_boxes, af_boxes_arr,
+                        ax_af_boxes,
+                        _rotate_boxes_cw90(af_boxes_arr, h_orig_af_boxes),
                         color="red", lw=2.8,
                         signs=af_kept_best_dev_arr,
                     )
@@ -7112,20 +7212,16 @@ def main() -> None:
                 _maybe_close(fig_af_boxes)
                 print(f"Saved → {path_af_boxes}")
 
-            # --- High-DPI "before" panel (rotated 90° CW for display) --- Captures vmin/vmax so the "after" panel reuses the same amplitude clip and the visible jump inside each red/yellow rectangle reflects real focusing gain, not per-figure rescaling. The rendered image is rotated 90° clockwise: `s.T[:, ::-1]` is a strided *view* of `s` (no data copy — see rule "never copy s"), and `_rotate_boxes_cw90` remaps the box (y, x, h, w) tuples into the same rotated display frame so every red/yellow rectangle stays glued to its target. Figsize is transposed so the on-canvas aspect matches the rotated scene, and axis labels are swapped (azimuth is now horizontal, range vertical) after `_show_slc` writes its default un-rotated labels. Keeper: always saved (one of the three files retained in minimal mode).
+            # --- High-DPI "before" panel (rotated 90° CW for display) --- Captures vmin/vmax so the "after" panel reuses the same amplitude clip and the visible jump inside each red/yellow rectangle reflects real focusing gain, not per-figure rescaling. `_show_slc_rot_cw90` renders `s.T[:, ::-1]` (a strided view of `s`, no data copy — rule "never copy s") with swapped axis labels; `_rotate_boxes_cw90` remaps the box (y, x, h, w) tuples into the same rotated display frame so every red/yellow rectangle stays glued to its target. Figsize is transposed so the on-canvas aspect matches the rotated scene. Keeper: always saved (one of the three files retained in minimal mode).
             path_af_before = save_dir / f"{stem}_af_before.png"
-            h_orig_af = int(s.shape[0])
-            s_view_rot_cw = s.T[:, ::-1]
             fig_af_before, ax_af_before = plt.subplots(
                 figsize=(14, 16), constrained_layout=True,
             )
-            vmin_shared, vmax_shared = _show_slc(
-                ax_af_before, s_view_rot_cw,
+            vmin_shared, vmax_shared, h_orig_af = _show_slc_rot_cw90(
+                ax_af_before, s,
                 "Input SAR image and MTI (unfocused)",
                 cmap="gray", sigma=3.0,
             )
-            ax_af_before.set_xlabel("azimuth pixel")
-            ax_af_before.set_ylabel("range pixel")
             if len(af_boxes_arr):
                 _overlay_boxes(
                     ax_af_before,
@@ -7155,20 +7251,21 @@ def main() -> None:
             del af_kept_chip_data
             del corrected_chip_af
 
-            # --- Full image with corrected chips pasted into the boxes --- Companion to `{stem}_af_boxes.png`; renders the mutated `s` with the surviving boxes outlined red (positive `best_deviation`) / yellow (negative) so the patched regions are easy to locate. Uses its own auto-scaled vmin/vmax (from the post-paste amplitude stats). Diagnostic — gated behind `_save_all`.
+            # --- Full image with corrected chips pasted into the boxes --- Companion to `{stem}_af_boxes.png`; renders the mutated `s` with the surviving boxes outlined red (positive `best_deviation`) / yellow (negative) so the patched regions are easy to locate. Rotated 90° CW so the orientation matches `af_before` / `af_after`. Uses its own auto-scaled vmin/vmax (from the post-paste amplitude stats). Diagnostic — gated behind `_save_all`.
             if _save_all:
                 path_af_corrected = save_dir / f"{stem}_af_corrected.png"
                 fig_af_corr, ax_af_corr = plt.subplots(
-                    figsize=(11, 9), constrained_layout=True,
+                    figsize=(9, 11), constrained_layout=True,
                 )
-                _show_slc(
+                _, _, h_orig_af_corr = _show_slc_rot_cw90(
                     ax_af_corr, s,
                     "Input SAR image and Focused Moving Targets",
                     cmap="gray", sigma=3.0,
                 )
                 if len(af_boxes_arr):
                     _overlay_boxes(
-                        ax_af_corr, af_boxes_arr,
+                        ax_af_corr,
+                        _rotate_boxes_cw90(af_boxes_arr, h_orig_af_corr),
                         color="red", lw=2.8,
                         signs=af_kept_best_dev_arr,
                     )
@@ -7176,20 +7273,17 @@ def main() -> None:
                 _maybe_close(fig_af_corr)
                 print(f"Saved → {path_af_corrected}")
 
-            # --- High-DPI "after" panel (rotated 90° CW for display) --- Reuses `vmin_shared` / `vmax_shared` captured on the "before" panel so the two keepers stay directly comparable. Same rotation trick as `af_before`: `s.T[:, ::-1]` is a strided *view* of the post-paste `s` (no copy — rule "never copy s"), boxes go through `_rotate_boxes_cw90`, figsize is transposed and axis labels are swapped after `_show_slc` writes its un-rotated defaults. Keeper: always saved (one of the three files retained in minimal mode).
+            # --- High-DPI "after" panel (rotated 90° CW for display) --- Reuses `vmin_shared` / `vmax_shared` captured on the "before" panel so the two keepers stay directly comparable. Same rotation as `af_before`, via `_show_slc_rot_cw90`. Keeper: always saved (one of the three files retained in minimal mode).
             path_af_after = save_dir / f"{stem}_af_after.png"
-            s_view_rot_cw = s.T[:, ::-1]
             fig_af_after, ax_af_after = plt.subplots(
                 figsize=(14, 16), constrained_layout=True,
             )
-            _show_slc(
-                ax_af_after, s_view_rot_cw,
+            _show_slc_rot_cw90(
+                ax_af_after, s,
                 "Input SAR image with focused moving targets",
                 vmin=vmin_shared, vmax=vmax_shared,
                 cmap="gray",
             )
-            ax_af_after.set_xlabel("azimuth pixel")
-            ax_af_after.set_ylabel("range pixel")
             if len(af_boxes_arr):
                 _overlay_boxes(
                     ax_af_after,
