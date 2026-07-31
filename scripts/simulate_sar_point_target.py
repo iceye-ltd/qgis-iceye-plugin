@@ -271,7 +271,9 @@ def main() -> None:
     print(f"Nchirp    = {int(round(p.Tp*p.Fs))} samples")
     print(f"(Naz,Nrg) = ({p.Naz}, {p.Nrg})")
 
-    rc, eta, tau = generate_rc(p)
+    raw, eta, tau = generate_raw(p)
+    rc = range_compress(raw, p)
+    del raw
     rc_rcmc = apply_rcmc(rc, p)
 
     plot_all(rc, rc_rcmc, p)
