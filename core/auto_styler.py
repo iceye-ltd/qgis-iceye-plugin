@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import numpy as np
-from numpy.typing import NDArray
 from qgis.core import (
     Qgis,
     QgsColorRamp,
@@ -26,6 +25,7 @@ from .temporal_properties import (
     apply_temporal_properties,
     apply_temporal_properties_for_frames,
 )
+from .typing_compat import NDArray
 
 
 def _find_alpha_band(layer: QgsRasterLayer) -> int | None:

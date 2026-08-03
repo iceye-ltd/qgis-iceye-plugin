@@ -6,7 +6,6 @@ from pathlib import Path
 from typing import Callable
 
 import numpy as np
-from numpy.typing import NDArray
 from osgeo import gdal
 from qgis import processing
 from qgis.core import (
@@ -29,6 +28,7 @@ from .cropper import (
 from .metadata import IceyeMetadata, parse_iso8601_datetime
 from .raster import read_slc_layer
 from .temporal_properties import apply_temporal_properties_for_frames
+from .typing_compat import NDArray
 
 # ============================================================================
 # Video Processing Task Class
