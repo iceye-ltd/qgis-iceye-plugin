@@ -5,6 +5,18 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.3.0](https://github.com/iceye-ltd/qgis-iceye-plugin/compare/v0.2.0...v0.3.0) (2026-08-03)
+
+
+### ### Added
+
+* KPA Lens mode ([#18](https://github.com/iceye-ltd/qgis-iceye-plugin/issues/18)) ([ca912a3](https://github.com/iceye-ltd/qgis-iceye-plugin/commit/ca912a367c5c30cabd71f13a391320c7034dfe06))
+
+
+### ### Fixed
+
+* small fixes to be compatible with Python 3.9 ([#17](https://github.com/iceye-ltd/qgis-iceye-plugin/issues/17)) ([85702bf](https://github.com/iceye-ltd/qgis-iceye-plugin/commit/85702bfc234d29b99163e83ff2d10ddb94cfe83c))
+
 ## [0.2.0](https://github.com/iceye-ltd/qgis-iceye-plugin/compare/v0.1.2...v0.2.0) (2026-06-05)
 
 
