@@ -1,0 +1,13 @@
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+.env
+.DS_Store
+*.png
+*.npy
+*.npz
+*.csv
+*_per_box/
+shear_*.png

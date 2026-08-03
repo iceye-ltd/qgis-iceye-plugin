@@ -1,0 +1,7 @@
+numpy>=1.24
+scipy>=1.10
+matplotlib>=3.7
+# Optional: required only when loading ICEYE SLC GeoTIFF (.tif/.tiff) inputs
+# Install the GDAL Python bindings for your platform, e.g.:
+#   conda install -c conda-forge gdal
+#   # or system package + matching pip wheel

@@ -1,0 +1,180 @@
+{
+    "_meta": {
+        "description": "Configuration for shear_averaging.py \u2014 SAR moving target detection via phase derivative analysis. Every leaf is {\"value\": <default>, \"help\": <docstring>}. The loader flattens the tree into a SimpleNamespace. Usage: `python shear_averaging.py [config.json] [<slc_path>] [--save <png>|auto|null] [--no-save]`. A `.json` positional overrides this config; any other positional overrides `input.path`. `--save` overrides `output.save` (`auto` / `null` / `--no-save` as documented).",
+        "path_semantics": "For `output.save`: `null` disables PNG saving; `\"auto\"` builds a fresh timestamped path inside `output.save_dir`; any other string is used verbatim.",
+        "prf_semantics": "`input.prf` = `null` means read PRF from the ICEYE sidecar/bundle. A numeric value overrides the sidecar (a warning is printed on mismatch).",
+        "unused_cli_note": "The original argparse block also exposed --kernel, --peaks-cluster-az-m/-rg-m, --nms-dist-az-m/-rg-m, --grow-sequence, --grow-peak-bridge, --az-step, --grow-density-th, --extend-density-th, --extend-max-steps and --seed-density-th, but none of those flags were ever read by main(): the peak-level clustering `az_search_m \u00d7 rg_search_m` inside `cluster_targets` (defaults 100 m \u00d7 10 m, defined at the function signature) subsumes the IoU / centre-distance / bridge / overlap merges. If you want to expose those hooks, wire them through `cluster_targets(...)` in main() and add matching keys under `clustering` here."
+    },
+    "input": {
+        "path": {
+            "value": null,
+            "help": "Path to either (1) a .npy SLC patch (the historical input \u2014 range/azimuth pixel spacings stay at the hard-coded patch defaults), (2) a .npz ICEYE patch bundle (a complex `data` array plus flat metadata fields \u2014 sar_resolution_range, sar_resolution_azimuth, sar_pixel_spacing_range, sar_pixel_spacing_azimuth, iceye_acquisition_prf, start_datetime, end_datetime \u2014 stored as 0-d arrays; treated exactly like `.npy + metadata_from <json>`), or (3) an ICEYE SLC GeoTIFF (.tif/.tiff). For the GeoTIFF case the script looks for a sidecar `<stem>.json` next to it (STAC-style ICEYE metadata) and reads the same fields from its `properties` block; `range_spacing` and `azimuth_spacing` are then set from `sar_pixel_spacing_range` / `sar_pixel_spacing_azimuth` instead of the patch defaults."
+        },
+        "metadata_from": {
+            "value": null,
+            "help": "Optional path to an ICEYE SLC GeoTIFF (.tif/.tiff) or its STAC-style sidecar JSON. When provided, the script reads the ICEYE metadata fields from that sidecar and uses them to drive `range_spacing`, `azimuth_spacing`, `integration_time` and PRF \u2014 even when `input.path` is a `.npy` patch (the historical default keeps hard-coded values). Pointing at a `.tif` resolves to its `<stem>.json` sidecar; passing the `.json` directly also works. Ignored when `input.path` is itself a `.tif`/`.tiff` (the path's own sidecar wins)."
+        },
+        "prf": {
+            "value": null,
+            "help": "Azimuth PRF in Hz, used to time-stamp subaperture centres for the COM linear-velocity fit. Each raw azimuth sample is 1/PRF seconds apart, so a subaperture of sub_size = N_az/N_subaperture rows spans sub_size/PRF seconds; subaperture k is centred at t_k = (k+0.5)\u00b7sub_size/PRF. Set to `null` to always read PRF from the ICEYE sidecar/bundle (fails if none is available). A numeric value here forces that PRF and prints a warning if the sidecar disagrees."
+        }
+    },
+    "output": {
+        "save": {
+            "value": "auto",
+            "help": "PNG output path. `null` disables PNG saving (equivalent to the legacy `--no-save`). `\"auto\"` expands to `<save_dir>/shear_<yyyymmdd_HHMMSS>_<uuid6>.png` at load time \u2014 the classic default. Any other string is treated as a literal path."
+        },
+        "save_dir": {
+            "value": ".",
+            "help": "Directory used when `output.save` is `\"auto\"`. Ignored when `output.save` is a literal path or `null`. Must be writeable; on PermissionError main() falls back to /tmp."
+        },
+        "show": {
+            "value": false,
+            "help": "Interactive mode: switch matplotlib to a GUI backend and pop every figure up via `plt.show()` at the end of the run instead of only writing PNGs to disk. Intermediate `plt.close(fig)` calls are skipped so figures stay live. Combine with `display_all_mode` and/or `debug` to see the rich diagnostic figures on screen. This flag is read at *import* time (before `matplotlib.use()` runs), so changing it requires a fresh process. PNG saving is unaffected; set `output.save` to `null` alongside `show=true` to skip the disk writes entirely."
+        },
+        "show_mask_boxes_only": {
+            "value": false,
+            "help": "Interactive filter for `output.show`: when both flags are on, close every figure except `{stem}_mask_boxes.png` before the final blocking `plt.show()` so only that single window pops up. Requires `debug=true` (otherwise the mask + boxes figure is never built). PNG saving is unaffected \u2014 the other figures still get written to disk. Ignored when `output.show` is off."
+        },
+        "debug": {
+            "value": false,
+            "help": "Master switch controlling how much gets written to `output.save`. When set to `true`, every diagnostic artefact is built and saved: main overview, sub_mean + boxes, slc_after_residual, slc_final_boxes, per-box NPZ archive, per-box statistics CSV, per-box d_phase / FFT / autofocus / refocus PNGs + per-box autofocus NPZ, autofocus_summary.csv, refocus_summary.csv, af_boxes and af_corrected overviews, plus the debug-only mask+boxes overlay (`{stem}_mask_boxes.png`) and raw arrays (`{stem}_dphase.npy`, `{stem}_slopes.npy`). When unset (default), the pipeline still runs end-to-end (including the polynomial range-walk + PGA autofocus per surviving box) but writes ONLY the two AF keeper files: `{stem}_af_before.png`, `{stem}_af_after.png` (`{stem}_kept_vs_eliminated.png` is debug-only). Orthogonal to `display_all_mode`, which only takes effect when `debug=true` \u2014 the three rich display figures (subapertures, dphase_fit, box_com) are never emitted in minimal mode regardless of `display_all_mode`."
+        },
+        "display_all_mode": {
+            "value": false,
+            "help": "Display / save gate for the three rich diagnostic figures: per-Doppler-band subaperture amplitudes (`{stem}_subapertures.png`), the d_phase + per-box slope\u00b7n overview (`{stem}_dphase_fit.png`) and the per-box subaperture-COM trajectory grid (`{stem}_box_com.png`). When unset (default), none of them are built or written; when set, all three are produced. Independent of `debug`."
+        },
+        "debug_roi": {
+            "value": null,
+            "help": "Trace boxes overlapping one or more rectangles [y_lo, y_hi, x_lo, x_hi] in s_degraded coords. Pass a list of 4-int lists to track multiple ROIs; each gets its own log lines at every filter stage so you can tell which target died where. Examples: [[2500, 5500, 100, 115]] (single ROI); [[22000, 28000, 210, 250], [7000, 10000, 300, 400]] (two ROIs). Default: null (off)."
+        }
+    },
+    "detection_mask": {
+        "n_subaperture": {
+            "value": 16,
+            "help": "Number of azimuth subapertures (Doppler sub-bands) used to build the CoV mask AND to compute the per-box COM trajectories. With fewer looks the sample-CoV\u00b2 estimator is noisier (std \u221d 1/\u221a(N-1)), each look is Doppler-wider so a mover's bright-look contrast drops, and the upsampled mask is blockier in azimuth (block size = n_subaperture rows). Lower N \u2192 less selective gate; if you halve N you typically need to lower `cov_th_mult` to recover marginal targets."
+        },
+        "cov_th_mult": {
+            "value": 1.5,
+            "help": "Multiplier on median(CoV\u00b2) for the CoV mask threshold (th = mult \u00b7 median(cov_sq)). Lower \u2192 more pixels pass the gate, more sensitive, more false alarms. When you reduce `n_subaperture`, the median floor and its sample noise both rise; drop this to ~1.0\u20131.2 at N=8 to compensate. When `bright_mode` is not 'off' this multiplier is applied to the DARK-region median only (see `dark_amp_percentile`); with mode='off' it applies to the scene-wide median as before."
+        },
+        "bright_mode": {
+            "value": "off",
+            "choices": [
+                "off",
+                "exclude",
+                "higher-th"
+            ],
+            "help": "How to threshold the CoV mask on a scene that mixes dark ocean (thermal-noise floor, cov\u00b2 ~ 0.02\u20130.10) with bright land / port (Rayleigh, cov\u00b2 ~ 0.3\u20131.5). 'off' (default) keeps the historical behaviour: single scene-wide `mult \u00b7 median(cov\u00b2)` \u2014 accurate when the entire scene is one background, but on mixed scenes the median is dragged up by land and ocean movers get buried under the gate. 'exclude' computes the median over DARK pixels only (`dark_amp_percentile`), applies `cov_th_mult \u00b7 median_dark(cov\u00b2)` to them, and zeros out the mask on bright pixels (we don't hunt movers on land). 'higher-th' does the same for dark pixels and *also* gates bright pixels with their own threshold `bright_cov_th_mult \u00b7 median_bright(cov\u00b2)`. Recommended: 'exclude' for maritime scenes; 'higher-th' if you need to detect movers inside a port too."
+        },
+        "dark_amp_percentile": {
+            "value": 50.0,
+            "help": "Amplitude percentile that separates DARK from BRIGHT pixels for the dark-aware CoV gate (see `bright_mode`). The threshold is computed as `np.percentile(sub_mean, p)` on the decimated Doppler-mean amplitude grid \u2014 a pixel is 'dark' iff its Doppler-mean amplitude is \u2264 that value. 50 \u2192 half the scene is dark; 70 \u2192 dark = the lower 70% of pixels (use when land is a small minority); 30 \u2192 only the darkest pixels count (conservative, misses low-contrast ships close to land). Ignored when `bright_mode` is 'off'."
+        },
+        "bright_cov_th_mult": {
+            "value": 3.0,
+            "help": "Multiplier on `median_bright(cov\u00b2)` used only when `bright_mode` is 'higher-th'. Bright pixels (amp > `dark_amp_percentile`) then pass the mask iff their CoV\u00b2 exceeds `bright_cov_th_mult \u00b7 median_bright(cov\u00b2)`. Higher than `cov_th_mult` by design: land clutter has a heavy right tail on cov\u00b2 and we do NOT want to declare half of it as movers."
+        }
+    },
+    "clustering": {
+        "peaks_as_boxes": {
+            "value": false,
+            "help": "Skip `grow_and_recenter_boxes` and `extend_boxes_azimuth_strong_signal` entirely and emit one box PER CLUSTER of `boundary_box` peaks. Peaks are clustered by chebyshev distance in metres inside `cluster_targets` (default 100 m \u00d7 10 m); each cluster becomes a single box with the peaks' bounding rectangle (padded to at least the seed window 100 az \u00d7 3 rg). Downstream NMS, bridge/overlap merge, and the slope / motion / residual filters still run unchanged. Use when you trust the peak-picker but the box-growth is smearing or merging distinct targets. NOTE: not wired at the call site yet \u2014 currently informational only; see `_meta.unused_cli_note`."
+        }
+    },
+    "nested_box_cleanup": {
+        "nested_box_coverage_thresh": {
+            "value": 0.9,
+            "help": "Post-clustering nested-box cleanup. For every pair of boxes in the cluster_targets output, if the SMALLER box has \u2265 this fraction of its area inside the BIGGER box, drop the bigger box (keep the tighter detection). Ties in area are broken by index: the higher-indexed member is treated as bigger, so mutual-overlap duplicate pairs collapse to a single survivor. Runs as the first stage of the post-cluster filter chain, before any phase / motion / contrast filter. Tracked in the CSV as `dropped_by_nested_box_overlap`. Set > 1.0 to disable."
+        }
+    },
+    "phase_fit": {
+        "min_row_coherence": {
+            "value": 0.5,
+            "help": "Only azimuth rows whose per-row coherence coh[i] = |\u03a3_j w\u00b7exp(j\u00b7d\u03c6_ij)| / \u03a3_j w_ij exceeds this threshold are used to fit the per-box linear phase model phi(i) \u2248 slope\u00b7i + intercept (and to evaluate its residual). Rows with coh[i] \u2264 threshold have high circular variance of d\u03c6 across range and are dropped from the fit, but are still drawn in the per-box d_phase scatter (as the dark viridis dots) for inspection. Applies identically inside `min_slope_deg`, `max_phase_residual_rad`, and the saved per-box slope / intercept / residual. Set to 0 to disable (keeps all rows in the fit, original behaviour)."
+        },
+        "inlier_tol_rad": {
+            "value": 0.5,
+            "help": "Diagnostic inlier tolerance (rad) for the per-box wrap-aware brute-force grid-search line fit. The fit itself minimises the coh-weighted mean wrapped distance |arg(exp(j\u00b7(phi[i] - slope\u00b7u[i] - intercept)))| over a 1001-point slope grid (no LS refit, no consensus gating), so this tolerance does NOT affect slope selection. It is only used to report 'n_inliers' per box \u2014 the count of high-coh (coh > `min_row_coherence`) rows that happen to land within \u00b1`inlier_tol_rad` of the chosen line \u2014 in the per-box plot titles and CSV. 0.5 rad \u2248 \u00b129\u00b0."
+        },
+        "min_slope_deg": {
+            "value": 0.0,
+            "help": "Drop boxes whose amp-weighted phase ramp has per-row slope |np.degrees(slope)| < this many degrees. Set to 0 to disable \u2014 use `slope_rad_thresh` instead."
+        },
+        "max_phase_residual_rad": {
+            "value": 1.0,
+            "help": "Drop boxes whose mean wrapped Euclidean distance from the estimated phase trace phi[i] to the linear fit slope\u00b7i + intercept exceeds this many radians. The score is mean(|arg(exp(j\u00b7(phi - phi_fit)))|), i.e. the average distance from each dot to the red line in the per-box d_phase figure with circular wrap. A coherent ramp scores low; a noisy / clutter target scores high. Set to 0 to disable."
+        },
+        "residual_skip_det_frac": {
+            "value": 0.5,
+            "help": "Bypass the `max_phase_residual_rad` filter for boxes whose CoV-gate detection count inside them exceeds this fraction of the box's azimuth row count. A bright / extended target with many mask hits is then trusted on amplitude alone, even if its phase trace is noisy. Set to a very large number to disable the bypass."
+        },
+        "phase_fit_thresh_rad": {
+            "value": 1.5,
+            "help": "Radial half-width (rad) used to compute the per-box 'fraction of azimuth rows within \u00b1T of the linear fit' metric \u2014 the phase-fit-quality SCORE. The metric is saved as `frac_within_1rad_coh` (coherence-weighted) and `frac_within_1rad` (unweighted). Lines up with the coherent-mover heuristic observed on the WTW3YQ dev scene (fit_quality_out/WTW3YQ_fit_vs_af.png). Does not by itself filter anything; combined with `phase_fit_frac1_min` and `max_focus_targets` to form the two-stage gate below."
+        },
+        "phase_fit_frac1_min": {
+            "value": 0.3,
+            "help": "Stage 1 of the phase-fit-quality gate: score threshold. The score is the coherence-weighted fraction of azimuth rows whose wrapped residual is within \u00b1`phase_fit_thresh_rad` of the linear fit (`frac_within_1rad_coh`). Boxes with a finite score below this threshold \u2014 and boxes with a NaN score \u2014 are dropped BEFORE the refocus-gain / sub-aperture-sharpness / autofocus stages. Set to 0.0 to disable this stage (Stage 2's top-N cap still runs). 0.5 is the empirical WTW3YQ default: keeps the 'coherent' fits and drops the ~wrapped-uniform residuals; 0.7 is more aggressive."
+        },
+        "max_focus_targets": {
+            "value": 100,
+            "help": "Stage 2 of the phase-fit-quality gate: top-N cap. After the `phase_fit_frac1_min` threshold, sort surviving boxes by score (frac_within_1rad_coh, descending) and keep at most N = min(count_above_threshold, max_focus_targets). Ties in score fall back to the original box index (lower first, stable sort). Autofocus is the pipeline bottleneck (~50-70% of total runtime on WTW3YQ) so bounding the candidate list also bounds the runtime. Set to 0 (or negative) to disable the cap and keep every threshold survivor. Interacts with `phase_fit_score_floor`: the final kept set is the UNION of the top-N and any box with score >= floor."
+        },
+        "phase_fit_score_floor": {
+            "value": 0.75,
+            "help": "Stage 2 SAFETY-NET floor for the phase-fit-quality gate. Independently of the `max_focus_targets` top-N cap, any box with a finite `frac_within_1rad_coh` >= this value is retained. The final kept set is the UNION of (top-N ranked) and (score >= floor), then re-sorted for stable ordering. Rationale: on the WTW3YQ dev scene the min-kept score for the top-100 cap sits near 0.925, and many legitimate marginal movers (real ships with clean linear phase fits) score 0.77-0.92 and get squeezed out \u2014 see scripts/missing_doubles_out/. A 0.75 floor recovers all of those (including the noisiest bimodal case B/852 at 0.774) without triggering the full 1000+ candidate list. Set to 0.0 (or negative) to disable the floor (pure top-N cap behaviour). Set >= 1.0 to make the floor unreachable (same effect)."
+        }
+    },
+    "motion_gate": {
+        "slope_rad_thresh": {
+            "value": 1.0,
+            "help": "UPPER box-wide phase-slope gate: |slope \u00b7 n_rows| \u2265 this value (rad) \u21d2 the box is unambiguously moving and is kept regardless of any other signal. Also used as the highlight threshold for the red overlays in Figure 1 and the `is_strong` column in the CSV."
+        },
+        "slope_rad_lower": {
+            "value": 0.1,
+            "help": "LOWER box-wide phase-slope gate: |slope \u00b7 n_rows| < this value (rad) \u21d2 the box is always filtered out, no matter what other signals say. Boxes in the ambiguous middle band [slope_rad_lower, slope_rad_thresh) are decided by the azimuth COM peak-to-peak (`az_pp_sub_thresh`)."
+        },
+        "az_pp_sub_thresh": {
+            "value": 20.0,
+            "help": "Peak-to-peak azimuth COM walk across the N subapertures (in subaperture-azimuth pixels; 1 sub-az px \u2248 n_subaperture \u00b7 azimuth_spacing on the ground). Used as the TIEBREAKER for boxes whose box-wide phase slope is in the ambiguous band [slope_rad_lower, slope_rad_thresh): they are kept only if az_pp \u2265 this threshold. Boxes with |slope\u00b7n| < slope_rad_lower are dropped regardless; boxes with |slope\u00b7n| \u2265 slope_rad_thresh are kept regardless. Set very large (e.g. 1e9) to drop every middle-band box. Revisit once geometry / radar params are calibrated."
+        },
+        "min_velocity_mps": {
+            "value": 2.0,
+            "help": "Per-box COM linear-velocity threshold (m/s) for the motion filter (Case 1). A box is moving iff |v_az| \u2265 this OR |v_rg| \u2265 this, where v_az and v_rg come from a linear fit of the per-subaperture COM (converted to ground metres) vs subaperture-centre time. The fit slope is the apparent ground COM velocity in that axis (m/s)."
+        }
+    },
+    "com_prefilter": {
+        "com_filter_mode": {
+            "value": "off",
+            "choices": [
+                "any",
+                "both",
+                "off"
+            ],
+            "help": "Legacy COM peak-to-peak filter (sub-aperture pixel thresholds via `com_az_thresh` / `com_rg_thresh`). Superseded by the motion filter (`min_velocity_mps` + `slope_rad_thresh`) which fits a linear velocity instead. Set to 'any' / 'both' to re-enable the legacy PP pre-cull in front of the motion filter."
+        },
+        "com_az_thresh": {
+            "value": 3.0,
+            "help": "Pre-phase amplitude filter: keep a box only if its azimuth COM peak-to-peak shift across the N subapertures is at least this many SUBAPERTURE-azimuth pixels (1 sub-az px \u2248 n_subaperture \u00d7 azimuth_spacing on the ground). Stationary targets typically score below the threshold. Set to a very large number to disable the azimuth criterion."
+        },
+        "com_rg_thresh": {
+            "value": 0.8,
+            "help": "Pre-phase amplitude filter: keep a box only if its range COM peak-to-peak shift across the N subapertures is at least this many s_degraded RANGE pixels (1 d-range px \u2248 Number_of_Range_Looks \u00d7 range_spacing on the ground). Set to a very large number to disable the range criterion."
+        }
+    },
+    "refocus_stage": {
+        "refocus": {
+            "value": false,
+            "help": "If set, run a *classification* refocus on every box that survives the motion gate. The fitted line a\u00b7n + b is re-centred so its midpoint sits at zero (intercept dropped \u2014 pure Doppler-centroid shift) and integrated analytically to a centred quadratic phase \u03c6(m) = \u00bd\u00b7a\u00b7(n \u2212 N/2)\u00b2. Following PGA, exp(-1j\u00b7\u03c6) is applied on the box chip's azimuth spectrum and IFFT'd back. For each surviving box a `box_NNN_refocus.png` (|I| before / |I| after) is written alongside the existing `box_NNN_dphase.png` in the `{stem}_per_box/` folder, plus a `refocus_summary.csv` with per-box (contrast_before, contrast_after, gain_dB). When set, the refocus gain is ALSO used as an additional filter (see `refocus_min_gain_db`)."
+        },
+        "refocus_min_gain_db": {
+            "value": -5.0,
+            "help": "When `refocus` is enabled, also drop every surviving box whose time-domain contrast gain (after the centred-QPE correction) falls below this threshold, in dB. Rationale: if applying the fitted slope's quadratic to the box chip DECREASES contrast significantly, the slope was inconsistent with the chip's actual spectral structure and the detection is likely spurious. Boxes with NaN gain (e.g. degenerate chip) are kept. Set very negative (e.g. -1e9) to effectively disable."
+        },
+        "subaperture_sharpness_min": {
+            "value": -1e+308,
+            "help": "Drop every surviving box whose per-box sub-aperture sharpness ratio \u03a3_j C(sub_j)/C(s_degraded) is finite and below this threshold. Here C(img) = std(|img|)/mean(|img|) is the amplitude coefficient of variation, summed across all n_subaperture Doppler sub-bands and divided by the full-aperture (degraded) contrast. With n_subaperture sub-bands a roughly stationary point target sits near `n_subaperture` (each sub-band \u2248 same contrast as the full image); larger values indicate that one or more sub-bands are individually sharper than the degraded full aperture, the signature of a refocused mover; smaller values indicate a smeared / extended target whose sub-bands all lose contrast vs. the full aperture. This is a DIMENSIONLESS RATIO (the `contrast_gain` column of the CSV / NPZ), NOT the dB refocus-gain value drawn on `box_NNN_refocus.png` (that one is gated by `refocus_min_gain_db`). Boxes with NaN ratio (empty crop / zero mean) are kept. Set to -1e308 (\u2248 -inf) to disable."
+        }
+    }
+}
