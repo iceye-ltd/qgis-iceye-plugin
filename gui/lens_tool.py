@@ -62,11 +62,8 @@ from ..core.cropper import get_extend_image_coords
 from ..core.looks import extract_centered_look
 from ..core.metadata import MetadataProvider
 from ..core.raster import read_slc_layer
-<<<<<<< HEAD
-from .kpa_doppler_window import KpaDopplerWindow
-=======
 from ..core.typing_compat import NDArray
->>>>>>> main
+from .kpa_doppler_window import KpaDopplerWindow
 from .toolbar_button_policy import ToolbarButtonPolicy
 
 KPA_RENDER_DELAY_MS = 200
