@@ -254,13 +254,13 @@ class AutofocusTask(QgsTask):
 
         try:
             QgsMessageLog.logMessage(
-                "Autofocus: centered-look PGA (10–25% of azimuth spectrum)",
+                "Autofocus: global range deviation correction (degree 2)",
                 "ICEYE Toolbox",
                 Qgis.MessageLevel.Info,
             )
-            focused_data = focus_with_centered_looks_pga(
+            data = apply_global_range_deviation_correction(
                 data,
-                progress_callback=self.setProgress,
+                progress_callback=lambda p: self.setProgress(p * 0.3),
             )
         except ValueError as e:
             QgsMessageLog.logMessage(
@@ -270,6 +270,25 @@ class AutofocusTask(QgsTask):
             )
             return False
 
+
+        
+        try:
+            QgsMessageLog.logMessage(
+                "Autofocus: centered-look PGA (10–25% of azimuth spectrum)",
+                "ICEYE Toolbox",
+                Qgis.MessageLevel.Info,
+            )
+            focused_data = focus_with_centered_looks_pga(
+                data,
+                progress_callback=lambda p: self.setProgress(30.0 + p * 0.7),
+            )
+        except ValueError as e:
+            QgsMessageLog.logMessage(
+                f"Error in autofocus: {e!s}",
+                "ICEYE Toolbox",
+                Qgis.MessageLevel.Critical,
+            )
+            return False
         QgsMessageLog.logMessage(
             f"Focused data shape: {focused_data.shape}",
             "ICEYE Toolbox",
@@ -559,8 +578,13 @@ def calculate_window(
 ) -> NDArray[np.int32]:
     """Select a target window from the power-spectrum profile."""
     p = np.sum(np.abs(s * np.conj(s)), axis=axis)
-    p = 10.0 * np.log10(p / p.max())
-    width = np.sum(p > threshold)
+    p_max = p.max()
+    if p_max > 0 and np.isfinite(p_max):
+        p = 10.0 * np.log10(p / p_max)
+        width = int(np.sum(p > threshold))
+    else:
+        # Degenerate patch (all-zero or non-finite power): fall back to min_width.
+        width = min_width
     if width < min_width:
         width = min_width
     # Ensure width never exceeds the input dimension
@@ -586,6 +610,193 @@ def apply_phase_correction(data, phase_error):
     data *= np.exp(-1j * phase_error_interp[:, None])
     data = ift(data, axis=0)
     return data
+
+
+def compute_contrast(image: NDArray[np.complex64]) -> float:
+    """Image-intensity contrast: ``std(|x|^2) / mean(|x|^2)``.
+
+    Higher values indicate sharper, more focused imagery. Returns 0 if the
+    mean intensity is non-positive.
+    """
+    intensity = np.abs(image) ** 2
+    mean = intensity.mean()
+    if mean <= 0:
+        return 0.0
+    return float(intensity.std() / mean)
+
+def compute_contrast_subaperture_sums(
+    image: NDArray[np.complex64], N_subaperture: int
+) -> NDArray[np.floating]:
+    """Per-subaperture intensity contrast over the centered 80% of azimuth.
+
+    Drops the outer 10% of azimuth rows on each side, splits the remaining
+    centered 80% into ``N_subaperture`` equal chunks, and returns an array of
+    ``std(|x|^2) / mean(|x|^2)`` per chunk. Returns zeros if the centered
+    region has non-positive mean intensity.
+    """
+    H = image.shape[0]
+    start = H // 10
+    end = H - H // 10
+    center = image[start:end]
+    seg = (end - start) // N_subaperture
+    intensity = np.zeros(N_subaperture, dtype=np.float32)
+    for i in range(N_subaperture):
+        intensity[i] = np.mean(np.abs(center[i * seg : (i + 1) * seg, :]) ** 2,axis = 0).std()
+    return intensity
+
+def shift_fitted(
+    s: NDArray[np.complex64], fitted: NDArray[np.floating]
+) -> NDArray[np.complex64]:
+    """Apply a per-azimuth-row range shift defined by *fitted* (in samples).
+
+    Each row ``k`` of *s* is shifted along the range axis by ``fitted[k]``
+    samples via a Fourier-domain phase ramp. Vectorised over rows.
+    Returns a new array; *s* is not modified.
+    """
+    N = s.shape[1]
+    k_over_N = np.arange(N) / N - 0.5
+    phase_ramp = np.exp(1j * 2.0 * np.pi * fitted[:, None] * k_over_N[None, :])
+    shift_term = np.fft.fftshift(phase_ramp, axes=1)
+    return np.fft.ifft(np.fft.fft(s, axis=1) * shift_term, axis=1)
+
+
+def _contrast_ratio_sum(
+    C: NDArray[np.floating], C_initial: NDArray[np.floating]
+) -> float:
+    """Sum of element-wise ``C / C_initial``, treating zero baselines as 1.
+
+    Subapertures with non-positive mean intensity return 0 from
+    :func:`compute_contrast_subaperture_sums`. For those, the ratio is
+    undefined (``0/0``); we treat it as 1.0 (i.e. "no change") so the running
+    max comparison stays stable and we never raise an "invalid value" warning.
+    """
+    ratio = np.divide(
+        C,
+        C_initial,
+        out=np.ones_like(C, dtype=np.float64),
+        where=C_initial > 0,
+    )
+    return float(np.sum(ratio))
+
+
+def find_best_deviation(
+    spatch_fft: NDArray[np.complex64],
+    x: NDArray[np.floating],
+    *,
+    dev_min: float = -100.0,
+    dev_max: float = 100.0,
+    accuracy: float = 0.5,
+    poly_degree: int = 2,
+    progress_callback: Callable[[float], None] | None = None,
+) -> tuple[float, int]:
+    """Coarse-to-fine search for the polynomial range deviation maximizing contrast.
+
+    Searches deviations in ``[dev_min, dev_max]`` with resolution *accuracy*
+    (floats allowed) and returns ``(best_deviation, n_sub_contrast_improved)``,
+    where the second value is the number of subapertures whose contrast
+    improved over the previous best at the chosen deviation.
+    """
+    coarse_step = max(accuracy * 5.0, (dev_max - dev_min) / 20.0)
+    best_deviation = 0.0
+    N_subaperture = 10
+    # Ratio-sum baseline: when C == C_initial, sum(C / C_initial) == N_subaperture.
+    # Only updates on genuine improvement over the running best.
+    max_contrast = float(N_subaperture)
+    C_initial = compute_contrast_subaperture_sums(spatch_fft, N_subaperture)
+
+    coarse = np.arange(dev_min, dev_max + coarse_step, coarse_step)
+    n_coarse = max(len(coarse), 1)
+    n_sub_contrast_improved = 0
+    for i, deviation in enumerate(coarse):
+        c = deviation / x[-1] ** poly_degree
+        fitted = -c * x**poly_degree
+        shifted = np.abs(shift_fitted(spatch_fft, fitted))
+        C = compute_contrast_subaperture_sums(shifted, N_subaperture)
+        contrast_gain = _contrast_ratio_sum(C, C_initial)
+        QgsMessageLog.logMessage(
+            f"[coarse {i+1}/{n_coarse}] deviation={float(deviation):.3f} "
+            f"contrast_gain={contrast_gain:.3f}",
+            "ICEYE Toolbox",
+            Qgis.MessageLevel.Info,
+        )
+        if contrast_gain > max_contrast:
+            max_contrast = contrast_gain
+            C_initial = np.copy(C)
+            best_deviation = float(deviation)
+        if progress_callback is not None:
+            progress_callback(50.0 * (i + 1) / n_coarse)
+
+    fine_min = max(dev_min, best_deviation - 2*coarse_step)
+    fine_max = min(dev_max, best_deviation + 2*coarse_step)
+    fine = np.arange(fine_min, fine_max + accuracy, accuracy)
+    n_fine = max(len(fine), 1)
+    for i, deviation in enumerate(fine):
+        c = deviation / x[-1] ** poly_degree
+        fitted = -c * x**poly_degree
+        shifted = np.abs(shift_fitted(spatch_fft, fitted))
+        C = compute_contrast_subaperture_sums(shifted, N_subaperture)
+        contrast_gain = _contrast_ratio_sum(C, C_initial)
+        QgsMessageLog.logMessage(
+            f"[fine {i+1}/{n_fine}] deviation={float(deviation):.3f} "
+            f"contrast_gain={contrast_gain:.3f}",
+            "ICEYE Toolbox",
+            Qgis.MessageLevel.Info,
+        )
+        if contrast_gain > max_contrast:
+            max_contrast = contrast_gain
+            C_initial = np.copy(C)
+            best_deviation = float(deviation)
+        if progress_callback is not None:
+            progress_callback(50.0 + 50.0 * (i + 1) / n_fine)
+
+    return best_deviation, int(n_sub_contrast_improved)
+
+
+def apply_global_range_deviation_correction(
+    data: NDArray[np.complex64],
+    *,
+    dev_min: float = -100.0,
+    dev_max: float = 100.0,
+    accuracy: float = 0.5,
+    poly_degree: int = 2,
+    progress_callback: Callable[[float], None] | None = None,
+) -> NDArray[np.complex64]:
+    """Estimate and remove a global polynomial range deviation (range walk).
+
+    The data is transformed to the azimuth-frequency / range-time domain;
+    a polynomial range shift of degree *poly_degree* is fitted by maximizing
+    intensity contrast (a coarse-to-fine grid search over ``[dev_min, dev_max]``
+    to resolution *accuracy*), then applied. The time-domain corrected SLC is
+    returned with the same dtype as the input.
+    """
+    if data.ndim != 2:
+        raise ValueError(f"Expected 2D SLC data, got shape {data.shape}")
+
+    rows = data.shape[0]
+    spatch_fft = np.fft.fftshift(np.fft.fft(data, axis=0), axes=0)
+    x = np.linspace(-0.5, 0.5, rows)
+    best_deviation, n_sub_contrast_improved = find_best_deviation(
+        spatch_fft,
+        x,
+        dev_min=dev_min,
+        dev_max=dev_max,
+        accuracy=accuracy,
+        poly_degree=poly_degree,
+        progress_callback=progress_callback,
+    )
+
+    QgsMessageLog.logMessage(
+        f"Global range deviation correction: best_deviation={best_deviation:.3f} "
+        f"(subapertures improved={n_sub_contrast_improved}/10, degree={poly_degree}, "
+        f"search=[{dev_min}, {dev_max}] @ {accuracy})",
+        "ICEYE Toolbox",
+        Qgis.MessageLevel.Info,
+    )
+
+    fitted = -best_deviation / x[-1] ** poly_degree * x**poly_degree
+    spatch_fft = shift_fitted(spatch_fft, fitted)
+    corrected = np.fft.ifft(np.fft.ifftshift(spatch_fft, axes=0), axis=0)
+    return corrected.astype(data.dtype, copy=False)
 
 
 def _centered_look_row_counts_from_azimuth_fractions(
