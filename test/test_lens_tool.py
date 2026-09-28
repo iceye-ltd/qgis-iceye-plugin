@@ -96,6 +96,22 @@ class TestKpaDopplerSpectrum:
         after = compute_kpa_after_doppler_spectrum(complex_data, a1=2.0, a2=-1.0)
         assert not np.allclose(before, after)
 
+    def test_pure_azimuth_shift_rolls_data_without_changing_magnitude(
+        self, complex_data
+    ):
+        """A pure azimuth shift (dx) should circularly shift the data along azimuth
+        and leave the azimuth Doppler magnitude spectrum unchanged."""
+        dx = 3.0
+        shifted = _apply_kpa_phase_compensation(complex_data, dx=dx)
+        expected = np.roll(complex_data, -int(dx), axis=0)
+        assert np.allclose(shifted, expected, atol=1e-3, rtol=1e-4)
+
+        baseline = compute_kpa_after_doppler_spectrum(complex_data, a1=0.0, a2=0.0)
+        after_shift = compute_kpa_after_doppler_spectrum(
+            complex_data, a1=0.0, a2=0.0, dx=dx
+        )
+        assert np.allclose(baseline, after_shift, atol=1e-3, rtol=1e-4)
+
 
 class TestCreateGeoreferencedTempRaster:
     """Tests for create_georeferenced_temp_raster function."""
