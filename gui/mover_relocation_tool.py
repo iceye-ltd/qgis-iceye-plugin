@@ -655,6 +655,9 @@ class MoverRelocationDialog(QDialog):
             QgsGeometry.fromPolygonXY([_points(band.polygon_lonlat)]), crs
         )
         self._write_band(band)
+        # Adding layers can make other tools hand the canvas back to Pan (via the
+        # toolbar policy's layer-change hooks); the constraint clicks come next.
+        self._activate_tool()
         self._set_step(STEP_CONSTRAINT)
         if band.clipped:
             self._result.setText(_tr("The band is clipped by the image extent."))
@@ -705,6 +708,7 @@ class MoverRelocationDialog(QDialog):
         self.last_result = result
         self._result.setText(format_relocation(result))
         self._write_result(result)
+        self._activate_tool()
         self._set_step(STEP_DONE)
 
     # ------------------------------------------------------------------

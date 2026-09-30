@@ -174,6 +174,35 @@ class TestMoverRelocationDialog:
         finally:
             project.layersAdded.disconnect(activate_added)
 
+    def test_map_tool_survives_output_layers(self, qgis_iface, slc_layer):
+        """The constraint clicks stay possible when adding a layer drops the tool.
+
+        In QGIS the new layer becomes active and the toolbar policy's layer-change
+        hooks can hand the canvas to Pan; simulate the worst case of that.
+        """
+        project = QgsProject.instance()
+        canvas = qgis_iface.mapCanvas()
+
+        def knock_out_tool(layers):
+            qgis_iface.setActiveLayer(layers[-1])
+            if canvas.mapTool() is not None:
+                canvas.unsetMapTool(canvas.mapTool())
+
+        project.layersAdded.connect(knock_out_tool)
+        try:
+            dialog = self._dialog(qgis_iface)
+            assert dialog.start()
+            _, imaged, on_road = _mover(dialog.scene)
+            dialog.handle_click(imaged)
+            assert dialog.step == STEP_CONSTRAINT
+            assert canvas.mapTool() is dialog.map_tool
+            dialog.handle_click(on_road(-60.0))
+            dialog.handle_click(on_road(60.0))
+            assert dialog.step == STEP_DONE, dialog._result.text()
+            assert canvas.mapTool() is dialog.map_tool
+        finally:
+            project.layersAdded.disconnect(knock_out_tool)
+
     def test_constraint_must_straddle(self, qgis_iface, slc_layer):
         """Two clicks on one side are rejected and the constraint step restarts."""
         dialog = self._dialog(qgis_iface)
