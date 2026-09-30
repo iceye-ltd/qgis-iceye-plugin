@@ -1,8 +1,9 @@
 """Curve editor: a line you bend by dragging its ends and its 1/3 and 2/3 handles.
 
 Fitted over an SLC chip of the current map view, the curve marks an imaged (displaced)
-moving ship; Search relocates it with ``core.target_finder.relocate_mover`` and writes
-the true position and the imaged-to-true displacement to memory layers.
+moving target. "Use as target" finds the target's hull along the curve
+(``core.mover_relocation.locate_imaged_target``) and hands the imaged position to the
+Mover Relocation tool, where the band is drawn and the constraint is clicked.
 """
 
 from __future__ import annotations
@@ -14,19 +15,13 @@ import numpy as np
 from qgis.core import (
     Qgis,
     QgsCoordinateTransform,
-    QgsFeature,
-    QgsField,
-    QgsFields,
-    QgsGeometry,
     QgsMessageLog,
-    QgsPointXY,
     QgsProject,
     QgsRasterLayer,
-    QgsVectorLayer,
+    QgsRectangle,
 )
 from qgis.PyQt.QtCore import (
     QCoreApplication,
-    QMetaType,
     QPointF,
     QRectF,
     Qt,
@@ -42,22 +37,21 @@ from qgis.PyQt.QtWidgets import (
     QLabel,
     QPushButton,
     QSizePolicy,
-    QSpinBox,
     QVBoxLayout,
     QWidget,
 )
 
 from ..core.cropper import get_extend_image_coords
 from ..core.metadata import MetadataProvider
+from ..core.mover_relocation import ImagedTarget, locate_imaged_target
 from ..core.target_finder import (
-    MoverEstimate,
     ProductGeometry,
     RelocationParameters,
     SlcChip,
+    gcp_mean_height,
     gcp_pixel_to_lonlat,
     patch_to_file_layout,
     read_iceye_properties,
-    relocate_mover,
 )
 from ..core.typing_compat import NDArray
 from .lens_tool import read_slc_data
@@ -66,10 +60,6 @@ from .lens_tool import read_slc_data
 MAX_CHIP_PIXELS = 20_000_000
 # Longest side of the background image drawn in the editor.
 _DISPLAY_SIZE = 1024
-
-_POINT_LAYER_NAME = "Mover true positions"
-_LINE_LAYER_NAME = "Mover displacements"
-_STRING_FIELDS = frozenset({"method", "flags"})
 
 
 def _tr(message: str) -> str:
@@ -107,53 +97,74 @@ def chip_display_image(data: NDArray[np.complexfloating[Any]]) -> QImage:
 
 
 def mask_overlay_image(
-    hull: NDArray[np.bool_] | None, ring: NDArray[np.bool_] | None
+    hull: NDArray[np.bool_] | None, ring: NDArray[np.bool_] | None = None
 ) -> QImage | None:
-    """Translucent image of the hull (orange) and clutter ring (cyan) masks."""
-    if hull is None or ring is None:
+    """Translucent image of the hull (orange) and optional clutter ring (cyan) masks."""
+    if hull is None:
         return None
     hull_small = _block_reduce(hull, _DISPLAY_SIZE, np.any)
-    ring_small = _block_reduce(ring, _DISPLAY_SIZE, np.any)
     rgba = np.zeros((*hull_small.shape, 4), dtype=np.uint8)
-    rgba[ring_small] = (0, 170, 200, 60)
+    if ring is not None:
+        rgba[_block_reduce(ring, _DISPLAY_SIZE, np.any)] = (0, 170, 200, 60)
     rgba[hull_small] = (230, 126, 34, 150)
     rgba = np.ascontiguousarray(rgba)
     rows, cols = hull_small.shape
     return QImage(rgba.data, cols, rows, cols * 4, QImage.Format.Format_RGBA8888).copy()
 
 
-def format_estimate(estimate: MoverEstimate) -> str:
-    """Short multi-line summary of a relocation result."""
+def canvas_extent_in_layer_crs(canvas, layer: QgsRasterLayer) -> QgsRectangle:
+    """Return the canvas extent expressed in the layer CRS."""
+    extent = canvas.extent()
+    canvas_crs = canvas.mapSettings().destinationCrs()
+    if canvas_crs != layer.crs():
+        transform = QgsCoordinateTransform(
+            canvas_crs, layer.crs(), QgsProject.instance()
+        )
+        extent = transform.transformBoundingBox(extent)
+    return extent
 
-    def opt(value: float | None, fmt: str) -> str:
-        return "n/a" if value is None else format(value, fmt)
 
-    lines = [
-        _tr("Method: {method}, confidence {conf:.2f}").format(
-            method=estimate.method, conf=estimate.confidence
-        ),
-        _tr("v_r {v_r:.2f} m/s, v_gr {v_gr:.2f} m/s, dx {dx:.1f} m").format(
-            v_r=estimate.v_r, v_gr=estimate.v_gr, dx=estimate.dx_m
-        ),
-        _tr("Speed {speed} m/s, heading {heading} deg, v_along {va} m/s").format(
-            speed=opt(estimate.speed, ".2f"),
-            heading=opt(estimate.heading_deg, ".0f"),
-            va=opt(estimate.v_along, ".2f"),
-        ),
-        _tr(
-            "Doppler: ship {fs:.0f} Hz, ring {fr:.0f} Hz, metadata {fm:.0f} Hz, "
-            "amplification {amp:.0f}"
-        ).format(
-            fs=estimate.f_ship_hz,
-            fr=estimate.f_ref_ring_hz,
-            fm=estimate.f_ref_meta_hz,
-            amp=estimate.amplification,
-        ),
-        _tr("Looks found: {n}; flags: {flags}").format(
-            n=len(estimate.targets), flags=", ".join(estimate.flags) or "-"
-        ),
-    ]
-    return "\n".join(lines)
+def read_slc_chip(
+    layer: QgsRasterLayer,
+    extent: QgsRectangle,
+    metadata_provider: MetadataProvider,
+) -> SlcChip:
+    """Complex SLC chip of ``layer`` under ``extent`` (layer CRS), in file layout.
+
+    Raises
+    ------
+    ValueError
+        With a user-facing message when the layer or extent cannot be read.
+    """
+    if not isinstance(layer, QgsRasterLayer) or layer.bandCount() < 2:
+        raise ValueError(_tr("Select an ICEYE SLC layer first."))
+    metadata = metadata_provider.get(layer)
+    if metadata is None:
+        raise ValueError(_tr("The active layer has no ICEYE metadata."))
+    bounds = get_extend_image_coords(layer, extent)
+    if bounds is None:
+        raise ValueError(_tr("Could not map the view to SLC pixels."))
+    if (
+        bounds.xMinimum() < 0
+        or bounds.yMinimum() < 0
+        or bounds.xMaximum() > layer.width()
+        or bounds.yMaximum() > layer.height()
+    ):
+        raise ValueError(_tr("Zoom in so the view lies inside the SLC."))
+    if bounds.width() * bounds.height() > MAX_CHIP_PIXELS:
+        raise ValueError(_tr("The view is too large; zoom in on the target."))
+    slc = read_slc_data(layer, extent, metadata_provider)
+    if slc is None:
+        raise ValueError(_tr("Failed to read the SLC samples."))
+    source = layer.dataProvider().dataSourceUri()
+    left = (metadata.sar_observation_direction or "").lower() == "left"
+    return SlcChip(
+        data=patch_to_file_layout(slc.data_patch, left),
+        col0=int(bounds.xMinimum()),
+        row0=int(bounds.yMinimum()),
+        geometry=ProductGeometry.from_properties(read_iceye_properties(source)),
+        pixel_to_lonlat=gcp_pixel_to_lonlat(source),
+    )
 
 
 class CurveEditorWidget(QWidget):
@@ -221,7 +232,7 @@ class CurveEditorWidget(QWidget):
         self.update()
 
     def set_markers(self, points: list[QPointF]) -> None:
-        """Mark 0..1 positions, e.g. the ship found in each sub-aperture look."""
+        """Mark 0..1 positions, e.g. the imaged target centroid."""
         self._markers = [QPointF(p) for p in points]
         self.update()
 
@@ -359,12 +370,14 @@ class CurveEditorWidget(QWidget):
 
 
 class CurveEditorDialog(QDialog):
-    """Non-modal window: fit the curve to a ship in an SLC chip, then relocate it.
+    """Non-modal window: fit the curve to a moving target in an SLC chip.
 
-    Load view reads the active ICEYE SLC layer under the current canvas extent;
-    Search estimates the ship's true position and adds it to two memory layers.
-    Without ``iface`` the dialog is a plain curve editor.
+    Load view reads the active ICEYE SLC layer under the current canvas extent; Use as
+    target finds the hull along the curve and emits ``target_located(target, layer)``
+    for the Mover Relocation tool. Without ``iface`` the dialog is a plain curve editor.
     """
+
+    target_located = pyqtSignal(object, object)  # ImagedTarget, QgsRasterLayer
 
     def __init__(
         self,
@@ -377,9 +390,9 @@ class CurveEditorDialog(QDialog):
         self.iface = iface
         self.metadata_provider = metadata_provider or MetadataProvider()
         self.chip: SlcChip | None = None
-        self.last_estimate: MoverEstimate | None = None
-        self._point_layer_id: str | None = None
-        self._line_layer_id: str | None = None
+        self.layer: QgsRasterLayer | None = None
+        self.display_height = 0.0
+        self.last_target: ImagedTarget | None = None
 
         self.setWindowTitle(_tr("Curve Editor"))
         self.setMinimumSize(520, 460)
@@ -399,15 +412,14 @@ class CurveEditorDialog(QDialog):
         self.corridor_spin.setRange(1.0, 500.0)
         self.corridor_spin.setSuffix(" m")
         self.corridor_spin.setValue(RelocationParameters.corridor_half_width_m)
-        self.corridor_spin.setToolTip(_tr("Half-width of the ship corridor"))
-        self.looks_spin = QSpinBox()
-        self.looks_spin.setRange(2, 16)
-        self.looks_spin.setValue(RelocationParameters.n_looks)
-        self.looks_spin.setToolTip(_tr("Sub-aperture looks for the map-drift estimate"))
+        self.corridor_spin.setToolTip(_tr("Half-width of the target corridor"))
 
-        self.search_button = QPushButton(_tr("Search"))
+        self.search_button = QPushButton(_tr("Use as target"))
         self.search_button.setToolTip(
-            _tr("Estimate the true position of the ship along the curve")
+            _tr(
+                "Find the target along the curve and relocate it with the Mover "
+                "Relocation tool"
+            )
         )
         self.search_button.setDefault(True)
         self.search_button.clicked.connect(self._on_search_clicked)
@@ -430,7 +442,6 @@ class CurveEditorDialog(QDialog):
 
         form = QFormLayout()
         form.addRow(_tr("Corridor half-width"), self.corridor_spin)
-        form.addRow(_tr("Looks"), self.looks_spin)
 
         buttons = QHBoxLayout()
         buttons.addWidget(self.search_button)
@@ -451,16 +462,22 @@ class CurveEditorDialog(QDialog):
     # ------------------------------------------------------------------
 
     def parameters(self) -> RelocationParameters:
-        """Relocation parameters from the dialog controls."""
-        return RelocationParameters(
-            corridor_half_width_m=self.corridor_spin.value(),
-            n_looks=self.looks_spin.value(),
-        )
+        """Hull detection parameters from the dialog controls."""
+        return RelocationParameters(corridor_half_width_m=self.corridor_spin.value())
 
-    def set_chip(self, chip: SlcChip) -> None:
+    def set_chip(
+        self,
+        chip: SlcChip,
+        layer: QgsRasterLayer | None = None,
+        display_height: float | None = None,
+    ) -> None:
         """Show ``chip`` behind the curve and clear any previous result."""
         self.chip = chip
-        self.last_estimate = None
+        self.layer = layer
+        self.display_height = (
+            chip.geometry.scene_height if display_height is None else display_height
+        )
+        self.last_target = None
         self.editor.set_background(chip_display_image(chip.data))
         self.editor.set_overlay(None)
         self.editor.set_markers([])
@@ -471,7 +488,9 @@ class CurveEditorDialog(QDialog):
                 "(columns: azimuth, rows: range)"
             ).format(cols=cols, rows=rows, x=chip.col0, y=chip.row0)
         )
-        self._status.setText(_tr("Bend the curve along the ship, then Search."))
+        self._status.setText(
+            _tr("Bend the curve along the target, then Use as target.")
+        )
 
     def load_from_canvas(self) -> bool:
         """Read the active SLC layer under the canvas extent into the editor."""
@@ -479,154 +498,60 @@ class CurveEditorDialog(QDialog):
             self._status.setText(_tr("No QGIS interface available."))
             return False
         layer = self.iface.activeLayer()
-        if not isinstance(layer, QgsRasterLayer) or layer.bandCount() < 2:
-            self._status.setText(_tr("Select an ICEYE SLC layer first."))
-            return False
-        metadata = self.metadata_provider.get(layer)
-        if metadata is None:
-            self._status.setText(_tr("The active layer has no ICEYE metadata."))
-            return False
-
-        canvas = self.iface.mapCanvas()
-        extent = canvas.extent()
-        canvas_crs = canvas.mapSettings().destinationCrs()
-        if canvas_crs != layer.crs():
-            transform = QgsCoordinateTransform(
-                canvas_crs, layer.crs(), QgsProject.instance()
-            )
-            extent = transform.transformBoundingBox(extent)
-
-        bounds = get_extend_image_coords(layer, extent)
-        if bounds is None:
-            self._status.setText(_tr("Could not map the view to SLC pixels."))
-            return False
-        width, height = layer.width(), layer.height()
-        if (
-            bounds.xMinimum() < 0
-            or bounds.yMinimum() < 0
-            or bounds.xMaximum() > width
-            or bounds.yMaximum() > height
-        ):
-            self._status.setText(_tr("Zoom in so the view lies inside the SLC."))
-            return False
-        if bounds.width() * bounds.height() > MAX_CHIP_PIXELS:
-            self._status.setText(_tr("The view is too large; zoom in on the ship."))
-            return False
-
         QApplication.setOverrideCursor(Qt.CursorShape.WaitCursor)
         try:
-            slc = read_slc_data(layer, extent, self.metadata_provider)
-            if slc is None:
-                self._status.setText(_tr("Failed to read the SLC samples."))
-                return False
+            extent = canvas_extent_in_layer_crs(self.iface.mapCanvas(), layer)
+            chip = read_slc_chip(layer, extent, self.metadata_provider)
             source = layer.dataProvider().dataSourceUri()
-            left = (metadata.sar_observation_direction or "").lower() == "left"
-            chip = SlcChip(
-                data=patch_to_file_layout(slc.data_patch, left),
-                col0=int(bounds.xMinimum()),
-                row0=int(bounds.yMinimum()),
-                geometry=ProductGeometry.from_properties(read_iceye_properties(source)),
-                pixel_to_lonlat=gcp_pixel_to_lonlat(source),
-            )
+            height = gcp_mean_height(source, chip.geometry.scene_height)
         except Exception as e:
             QgsMessageLog.logMessage(
                 f"Curve editor failed to load SLC: {e}",
                 "ICEYE Toolbox",
                 Qgis.MessageLevel.Warning,
             )
-            self._status.setText(_tr("Failed to load the SLC: {e}").format(e=e))
+            self._status.setText(str(e))
             return False
         finally:
             QApplication.restoreOverrideCursor()
-        self.set_chip(chip)
+        self.set_chip(chip, layer, height)
         return True
 
     # ------------------------------------------------------------------
-    # Search
+    # Target
     # ------------------------------------------------------------------
 
     def _on_search_clicked(self) -> None:
-        """Relocate the ship along the current curve."""
+        """Locate the target's hull along the curve and hand it on."""
         if self.chip is None:
             self._status.setText(_tr("Load an SLC view first."))
             return
-        QApplication.setOverrideCursor(Qt.CursorShape.WaitCursor)
         try:
-            estimate = relocate_mover(
-                self.chip, self.editor.control_points(), self.parameters()
+            target = locate_imaged_target(
+                self.chip,
+                self.editor.control_points(),
+                self.display_height,
+                self.parameters(),
             )
         except Exception as e:
             QgsMessageLog.logMessage(
-                f"Mover relocation failed: {e}",
+                f"Target detection failed: {e}",
                 "ICEYE Toolbox",
                 Qgis.MessageLevel.Warning,
             )
-            self._status.setText(_tr("Search failed: {e}").format(e=e))
+            self._status.setText(_tr("Target detection failed: {e}").format(e=e))
             return
-        finally:
-            QApplication.restoreOverrideCursor()
-
-        self.last_estimate = estimate
+        self.last_target = target
+        rows, cols = self.chip.shape
         self.editor.set_markers(
-            [QPointF(t.x_fraction, t.y_fraction) for t in estimate.targets]
+            [QPointF(target.col / max(cols - 1, 1), target.row / max(rows - 1, 1))]
         )
-        self.editor.set_overlay(
-            mask_overlay_image(estimate.hull_mask, estimate.ring_mask)
+        self.editor.set_overlay(mask_overlay_image(target.hull_mask))
+        lon, lat = target.lonlat
+        self._status.setText(
+            _tr(
+                "Imaged position {lon:.6f}, {lat:.6f} (half-extent {ext:.1f} m). "
+                "Click the constraint in the Mover Relocation tool."
+            ).format(lon=lon, lat=lat, ext=target.half_extent_m)
         )
-        self._status.setText(format_estimate(estimate))
-        if self.iface is not None:
-            self._write_layers(estimate)
-
-    # ------------------------------------------------------------------
-    # Output layers
-    # ------------------------------------------------------------------
-
-    @staticmethod
-    def _fields(estimate: MoverEstimate) -> QgsFields:
-        fields = QgsFields()
-        for name in estimate.attributes():
-            kind = (
-                QMetaType.Type.QString
-                if name in _STRING_FIELDS
-                else QMetaType.Type.Double
-            )
-            fields.append(QgsField(name, kind))
-        return fields
-
-    def _layer(
-        self, layer_id: str | None, geometry: str, name: str, estimate
-    ) -> QgsVectorLayer:
-        """Existing output layer, or a new EPSG:4326 memory layer added to the project."""
-        project = QgsProject.instance()
-        layer = project.mapLayer(layer_id) if layer_id else None
-        if isinstance(layer, QgsVectorLayer) and layer.isValid():
-            return layer
-        layer = QgsVectorLayer(f"{geometry}?crs=EPSG:4326", name, "memory")
-        layer.dataProvider().addAttributes(self._fields(estimate))
-        layer.updateFields()
-        project.addMapLayer(layer)
-        return layer
-
-    def _write_layers(self, estimate: MoverEstimate) -> None:
-        """Append the true position and the displacement line to the output layers."""
-        points = self._layer(self._point_layer_id, "Point", _POINT_LAYER_NAME, estimate)
-        lines = self._layer(
-            self._line_layer_id, "LineString", _LINE_LAYER_NAME, estimate
-        )
-        self._point_layer_id, self._line_layer_id = points.id(), lines.id()
-
-        imaged = QgsPointXY(*estimate.imaged_lonlat)
-        true = QgsPointXY(*estimate.true_lonlat)
-        attributes = estimate.attributes()
-        for layer, geometry in (
-            (points, QgsGeometry.fromPointXY(true)),
-            (lines, QgsGeometry.fromPolylineXY([imaged, true])),
-        ):
-            feature = QgsFeature(layer.fields())
-            for name, value in attributes.items():
-                if layer.fields().indexOf(name) >= 0:
-                    feature.setAttribute(name, value)
-            feature.setGeometry(geometry)
-            layer.dataProvider().addFeature(feature)
-            layer.updateExtents()
-            layer.triggerRepaint()
+        self.target_located.emit(target, self.layer)

@@ -1,49 +1,28 @@
-"""Moving-ship relocation for ICEYE Spotlight / Dwell SLCs, driven by a fitted curve.
+"""SLC geometry and target detection for moving-target relocation (Spotlight / Dwell).
 
-The user bends the curve editor's Bezier along the imaged (displaced) ship. Everything
-below uses only the SLC samples and the product metadata; no AIS, wakes or other
-external references.
+Shared by ``core.mover_relocation`` (the two-click relocation tool):
 
-Pipeline (see ``relocate_mover``):
+* Orbit polynomial fit, range-Doppler inverse (``Orbit.zero_doppler``) and zero-Doppler
+  geocoding onto a height surface (``Orbit.geocode``); ``Ka``, ``V_eff`` and ``V_g``
+  from the orbit (``ProductGeometry.kinematics``).
+* SLC chips in file layout (rows = range samples, columns = azimuth lines) with GCP
+  geolocation, and the curve / click corridor, clutter ring and hull masks.
+* Sub-aperture map drift along a curve (``find_targets_along_curve``, ``map_drift``),
+  kept only for an optional along-track velocity consistency check.
 
-1. The curve, a corridor around it and a clutter ring outside it are rasterised in
-   SLC pixel space (file layout: rows = range samples, columns = azimuth lines).
-2. Bright hull pixels inside the corridor are kept (threshold against ring clutter and
-   against the hull peak, which drops most sidelobe energy); bright pixels in the ring
-   (streaks, other targets) are dropped from the clutter reference.
-3. Doppler of hull and ring along azimuth, by the band-limited spectral centroid
-   (default) or the correlation (Madsen) estimator ``C = sum(s[n+1] * conj(s[n]))``,
-   corrected for truncation by the processing window. The reference Doppler comes
-   from the metadata Doppler centroid (primary) and from the ring (cross-check); each
-   is solved at the TRUE position by Newton iteration together with the zero-Doppler
-   geocoding.
-4. ``df -> v_r = lambda*df/2 -> dt = df/Ka``; the true zero-Doppler time is
-   ``t_img - dt`` at the imaged slant range, geocoded onto the sea surface.
-5. Sub-aperture looks along the curve (``find_targets_along_curve``) give a map-drift
-   estimate of along-track velocity; with the hull heading this is a second, independent
-   relocation that stays usable where the Doppler centroid is not.
+The Doppler-centroid radial-velocity estimate, its truncation correction and the
+reference-Doppler iteration were removed: in Spotlight / Dwell the beam-steered
+centroid moves at almost exactly the FM rate, so a mover's own echoes carry no usable
+radial velocity (``doppler_amplification`` ~ 3000 on the WWGTZ2 fixture).
 
-Conventions and caveats found on real products (WWGTZ2 SLED fixture):
+Conventions found on real products (WWGTZ2 SLED fixture):
 
 * Azimuth sample spacing is ``1 / iceye:processing_prf``; the time direction along file
   columns is taken from the geolocation (it decreases with column index there).
-* The azimuth spectrum is flat over the processed bandwidth and centred on zero, so the
-  SLC is treated as basebanded to the local Doppler centroid (``slc_basebanded``).
-* In Spotlight / Dwell the Doppler centroid moves with azimuth position at almost exactly
-  the azimuth FM rate (4918 vs 4920 Hz/s on the fixture). A mover's centroid then equals
-  that of the clutter at its imaged position to first order, and solving for the true
-  position amplifies any Doppler error by ``1 / |1 - dfdc_dt / Ka|`` (about 3500 on the
-  fixture). This is reported as ``amplification`` and flagged; the map-drift estimate
-  is then used for the output position when it is valid.
-* Over the 17.6 deg Dwell aperture the Doppler of stationary port scatterers varies by
-  kHz with their aspect, and a ring of flat-spectrum clutter is only good to ~50 Hz
-  (~0.8 m/s); Doppler estimates carry that scatter.
 * Map drift assumes the hull reflects over the whole aperture. A straight structure
-  whose specular point slides with look angle drifts like a mover, so the curve must
-  enclose an isolated ship at sea.
-* The Doppler sign (``DOPPLER_SIGN``) relative to the phase convention of
-  ``core.raster.read_slc_layer`` and the map-drift sign are not yet verified against a
-  mover with known motion; every estimate carries ``FLAG_SIGN_UNVERIFIED``.
+  whose specular point slides with look angle drifts like a mover.
+* The map-drift sign (via ``DOPPLER_SIGN`` and the phase convention of
+  ``core.raster.read_slc_layer``) is not verified against a mover with known motion.
 """
 
 from __future__ import annotations
@@ -51,7 +30,7 @@ from __future__ import annotations
 import json
 import math
 from collections.abc import Callable, Sequence
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from datetime import datetime
 from typing import Any
 
@@ -72,27 +51,6 @@ _WGS84_E2 = 1.0 - (_WGS84_B / _WGS84_A) ** 2
 # (s = A * exp(-j * phase)). Positive physical Doppler = approaching the radar.
 DOPPLER_SIGN = 1.0
 
-FLAG_SIGN_UNVERIFIED = "sign_unverified"
-FLAG_ILL_CONDITIONED = "doppler_ill_conditioned"
-FLAG_REFERENCE_DISAGREEMENT = "reference_disagreement"
-FLAG_NEAR_BANDWIDTH_EDGE = "near_bandwidth_edge"
-FLAG_NEAR_AMBIGUITY = "near_doppler_ambiguity"
-FLAG_LOW_COHERENCE = "low_coherence"
-FLAG_FEW_SAMPLES = "few_samples"
-FLAG_NOT_CONVERGED = "not_converged"
-FLAG_HEADING_UNRELIABLE = "heading_unreliable"
-FLAG_HEADING_NEAR_AZIMUTH = "heading_near_azimuth"
-FLAG_HEADING_NEAR_RANGE = "heading_near_range"
-FLAG_FEW_LOOKS = "few_looks"
-FLAG_NO_VALID_ESTIMATE = "no_valid_estimate"
-FLAG_MODE_NOT_SPOTLIGHT = "mode_not_spotlight"
-FLAG_RING_UNRELIABLE = "ring_unreliable"
-
-METHOD_DOPPLER = "doppler"
-METHOD_MAP_DRIFT = "map_drift"
-METHOD_NONE = "none"
-
-
 # ----------------------------------------------------------------------------------
 # Parameters and results
 # ----------------------------------------------------------------------------------
@@ -100,27 +58,15 @@ METHOD_NONE = "none"
 
 @dataclass
 class RelocationParameters:
-    """Tunable settings of the relocation pipeline (distances in ground metres)."""
+    """Hull detection and map-drift settings (distances in ground metres)."""
 
     corridor_half_width_m: float = 15.0
     ring_gap_m: float = 10.0
     ring_width_m: float = 30.0
     hull_snr_db: float = 10.0
     hull_dynamic_range_db: float = 25.0
-    hull_dilation_m: float = 2.0
-    min_ring_coherence: float = 0.05
     n_looks: int = 5
-    max_amplification: float = 5.0
-    reference_disagreement_mps: float = 0.5
-    min_coherence: float = 0.1
-    min_samples: int = 50
-    min_looks: int = 3
-    min_heading_cosine: float = 0.2
     streak_db: float = 15.0
-    doppler_estimator: str = "centroid"
-    slc_basebanded: bool = True
-    max_iterations: int = 10
-    position_tolerance_m: float = 0.1
 
 
 @dataclass
@@ -136,85 +82,6 @@ class CurveTarget:
     y_fraction: float
     intensity_db: float
     n_pixels: int
-
-
-@dataclass
-class DopplerEstimate:
-    """Correlation Doppler estimate over a mask."""
-
-    frequency_hz: float
-    coherence: float
-    n_samples: int
-
-
-@dataclass
-class DopplerSolution:
-    """Relative Doppler offset solved at the true position for one reference."""
-
-    reference: str
-    df_hz: float
-    v_r: float
-    dt_s: float
-    dx_m: float
-    converged: bool
-
-
-@dataclass
-class MoverEstimate:
-    """Outcome of ``relocate_mover``; velocities in m/s, v_r > 0 towards the radar."""
-
-    method: str
-    imaged_lonlat: tuple[float, float]
-    true_lonlat: tuple[float, float]
-    v_r: float
-    v_gr: float
-    df_hz: float
-    dt_s: float
-    dx_m: float
-    speed: float | None
-    heading_deg: float | None
-    confidence: float
-    flags: list[str]
-    f_ship_hz: float
-    f_ref_ring_hz: float
-    f_ref_meta_hz: float
-    coherence: float
-    n_samples: int
-    amplification: float
-    doppler_spread_hz: float
-    doppler_meta: DopplerSolution | None
-    doppler_ring: DopplerSolution | None
-    v_along: float | None
-    v_along_fit_r2: float | None
-    range_walk_rate: float | None
-    hull_axis_deg: float | None
-    targets: list[CurveTarget] = field(default_factory=list)
-    hull_mask: NDArray[np.bool_] | None = None
-    ring_mask: NDArray[np.bool_] | None = None
-    iterations: int = 0
-
-    def attributes(self) -> dict[str, Any]:
-        """Flat attribute dict for the output point layer."""
-        return {
-            "method": self.method,
-            "v_r": self.v_r,
-            "v_gr": self.v_gr,
-            "df_hz": self.df_hz,
-            "dt_s": self.dt_s,
-            "dx_m": self.dx_m,
-            "speed": self.speed,
-            "heading": self.heading_deg,
-            "v_along": self.v_along,
-            "confidence": self.confidence,
-            "coherence": self.coherence,
-            "n_samples": self.n_samples,
-            "amplif": self.amplification,
-            "f_ship": self.f_ship_hz,
-            "f_ref_ring": self.f_ref_ring_hz,
-            "f_ref_meta": self.f_ref_meta_hz,
-            "dopp_sprd": self.doppler_spread_hz,
-            "flags": ",".join(self.flags),
-        }
 
 
 # ----------------------------------------------------------------------------------
@@ -535,22 +402,50 @@ def read_iceye_properties(source_path: str) -> dict[str, Any]:
 PixelToLonLat = Callable[[float, float], tuple[float, float]]
 
 
+class _GcpTransform:
+    """GCP TPS transform of an ICEYE GeoTIFF: pixel -> lon/lat, or its inverse."""
+
+    def __init__(self, source_path: str, inverse: bool) -> None:
+        self._dataset = gdal.Open(source_path)
+        if self._dataset is None:
+            raise ValueError(f"Failed to open {source_path}")
+        self._transformer = gdal.Transformer(self._dataset, None, ["METHOD=GCP_TPS"])
+        self._inverse = int(inverse)
+
+    def __call__(self, x: float, y: float) -> tuple[float, float]:
+        """(col, row) -> (lon, lat), or (lon, lat) -> (col, row) when inverse."""
+        ok, point = self._transformer.TransformPoint(
+            self._inverse, float(x), float(y), 0.0
+        )
+        if not ok:
+            raise ValueError(f"({x}, {y}) could not be transformed")
+        return float(point[0]), float(point[1])
+
+    def close(self) -> None:
+        """Release the transformer before the dataset it references."""
+        self._transformer = None
+        self._dataset = None
+
+
 def gcp_pixel_to_lonlat(source_path: str) -> PixelToLonLat:
     """Return a (file col, file row) -> (lon, lat) function from the GCP TPS model."""
+    return _GcpTransform(source_path, inverse=False)
+
+
+def gcp_lonlat_to_pixel(
+    source_path: str,
+) -> Callable[[float, float], tuple[float, float]]:
+    """Return a (lon, lat) -> (file col, file row) function, inverse of the GCP model."""
+    return _GcpTransform(source_path, inverse=True)
+
+
+def gcp_mean_height(source_path: str, default: float = 0.0) -> float:
+    """Mean GCP height: the surface the GCP-warped display of the SLC lies on."""
     dataset = gdal.Open(source_path)
     if dataset is None:
         raise ValueError(f"Failed to open {source_path}")
-    transformer = gdal.Transformer(dataset, None, ["METHOD=GCP_TPS"])
-
-    def transform(col: float, row: float) -> tuple[float, float]:
-        ok, point = transformer.TransformPoint(0, float(col), float(row), 0.0)
-        if not ok:
-            raise ValueError(f"Pixel ({col}, {row}) could not be geolocated")
-        return float(point[0]), float(point[1])
-
-    # Keep the dataset alive for as long as the transformer is used.
-    transform.dataset = dataset  # type: ignore[attr-defined]
-    return transform
+    heights = [gcp.GCPZ for gcp in dataset.GetGCPs() or []]
+    return float(np.mean(heights)) if heights else default
 
 
 def patch_to_file_layout(
@@ -756,149 +651,25 @@ def hull_and_clutter_masks(
 
 
 # ----------------------------------------------------------------------------------
-# Doppler
+# Doppler diagnostic
 # ----------------------------------------------------------------------------------
 
 
-def dilate_columns(mask: NDArray[np.bool_], radius: int) -> NDArray[np.bool_]:
-    """Binary dilation of a mask by ``radius`` pixels along columns (azimuth)."""
-    if radius <= 0:
-        return mask.copy()
-    padded = np.pad(mask.astype(np.int32), ((0, 0), (radius + 1, radius)))
-    csum = np.cumsum(padded, axis=1)
-    window = csum[:, 2 * radius + 1 :] - csum[:, : -(2 * radius + 1)]
-    return window > 0
-
-
-def correlation_doppler(
-    data: NDArray[np.complexfloating[Any]],
-    mask: NDArray[np.bool_],
-    dt_col: float,
-) -> DopplerEstimate:
-    """Correlation Doppler estimator along columns (azimuth) over a mask.
-
-    ``dt_col`` is the signed time per column, so the result is the Doppler in time.
-    """
-    pair = mask[:, 1:] & mask[:, :-1]
-    s0 = data[:, :-1][pair]
-    s1 = data[:, 1:][pair]
-    n = int(s0.size)
-    if n == 0:
-        return DopplerEstimate(0.0, 0.0, 0)
-    c = np.sum(s1 * np.conj(s0))
-    power = 0.5 * float(np.sum(np.abs(s0) ** 2 + np.abs(s1) ** 2))
-    f = DOPPLER_SIGN * float(np.angle(c)) / (2.0 * math.pi * dt_col)
-    return DopplerEstimate(f, float(abs(c)) / power if power > 0 else 0.0, n)
-
-
-def spectral_centroid_doppler(
-    data: NDArray[np.complexfloating[Any]],
-    mask: NDArray[np.bool_],
-    dt_col: float,
-    bandwidth: float,
+def doppler_amplification(
+    geometry: ProductGeometry, t: float, point: NDArray[np.float64]
 ) -> float:
-    """Power-weighted mean azimuth frequency (Hz) inside ``[-bandwidth/2, bandwidth/2]``.
+    """Error gain ``1 / |1 - dfdc_dt / Ka|`` of a Doppler-centroid relocation.
 
-    Valid for a basebanded SLC whose processed band leaves a gap at +-PRF/2, so the
-    linear mean cannot wrap. The masked range lines are Fourier transformed whole.
+    Diagnostic only: in Spotlight / Dwell the beam-steered centroid moves at almost
+    exactly the FM rate (``A ~ 3000`` on the WWGTZ2 fixture), so a mover's own echoes
+    carry no usable radial velocity and no Doppler estimate is used for relocation.
     """
-    rows = np.flatnonzero(mask.any(axis=1))
-    if rows.size == 0:
-        return 0.0
-    segments = np.where(mask[rows], data[rows], 0)
-    power = np.sum(np.abs(np.fft.fft(segments, axis=1)) ** 2, axis=0)
-    freqs = DOPPLER_SIGN * np.fft.fftfreq(data.shape[1], dt_col)
-    band = np.abs(freqs) <= bandwidth / 2.0
-    total = float(np.sum(power[band]))
-    return float(np.sum(power[band] * freqs[band]) / total) if total > 0 else 0.0
-
-
-def estimate_doppler(
-    data: NDArray[np.complexfloating[Any]],
-    mask: NDArray[np.bool_],
-    dt_col: float,
-    bandwidth: float,
-    method: str = "centroid",
-) -> DopplerEstimate:
-    """Doppler over a mask by ``"correlation"`` (Madsen) or ``"centroid"``.
-
-    The coherence is always the lag-one correlation coherence. When the processed band
-    nearly fills the PRF (86 % on ICEYE Dwell) the lag-one coherence of any target is
-    only about sinc(B / PRF) ~ 0.16 and its angle is easily pulled by scene structure,
-    which is why the band-limited spectral centroid is the default.
-    """
-    corr = correlation_doppler(data, mask, dt_col)
-    if method == "correlation" or corr.n_samples == 0:
-        return corr
-    if method != "centroid":
-        raise ValueError(f"Unknown Doppler estimator {method!r}")
-    return DopplerEstimate(
-        spectral_centroid_doppler(data, mask, dt_col, bandwidth),
-        corr.coherence,
-        corr.n_samples,
+    _, r = geometry.orbit.zero_doppler(point, t)
+    gain = (
+        1.0
+        - geometry.doppler_centroid_rate(t, r) / geometry.kinematics(t, point).fm_rate
     )
-
-
-def doppler_spread(
-    data: NDArray[np.complexfloating[Any]],
-    mask: NDArray[np.bool_],
-    dt_col: float,
-    min_pairs: int = 8,
-) -> float:
-    """Power-weighted spread (Hz) of per-range-row Doppler across the hull.
-
-    Rows see different parts of the hull, so the spread bounds rotational motion.
-    """
-    pair = mask[:, 1:] & mask[:, :-1]
-    prod = data[:, 1:] * np.conj(data[:, :-1])
-    c_rows = np.where(pair, prod, 0).sum(axis=1)
-    counts = pair.sum(axis=1)
-    keep = counts >= min_pairs
-    if keep.sum() < 2:
-        return 0.0
-    f_rows = DOPPLER_SIGN * np.angle(c_rows[keep]) / (2.0 * math.pi * dt_col)
-    w = np.abs(c_rows[keep])
-    mean = np.angle(np.sum(c_rows[keep])) * DOPPLER_SIGN / (2.0 * math.pi * dt_col)
-    return float(math.sqrt(np.sum(w * (f_rows - mean) ** 2) / np.sum(w)))
-
-
-def truncation_bias_curve(
-    processed_bandwidth: float,
-    sampling_rate: float,
-    offsets: NDArray[np.float64],
-    target_bandwidth: float | None = None,
-    n: int = 8192,
-) -> NDArray[np.float64]:
-    """Correlation-estimator reading for spectra offset by ``offsets`` (Hz).
-
-    A point target with a flat spectrum of ``target_bandwidth`` (default: the processed
-    bandwidth) centred at each offset is cut to the processing window
-    ``[-B/2, B/2]``, and the lag-one correlation of what remains is evaluated.
-    """
-    bt = processed_bandwidth if target_bandwidth is None else target_bandwidth
-    f = np.fft.fftfreq(n, 1.0 / sampling_rate)
-    window = np.abs(f) <= processed_bandwidth / 2.0
-    out = np.empty(len(offsets))
-    for i, df in enumerate(offsets):
-        support = window & (np.abs(f - df) <= bt / 2.0)
-        if not support.any():
-            out[i] = np.nan
-            continue
-        c = np.sum(np.exp(2j * math.pi * f[support] / sampling_rate))
-        out[i] = np.angle(c) * sampling_rate / (2.0 * math.pi)
-    return out
-
-
-def correct_truncation(
-    measured: float, processed_bandwidth: float, sampling_rate: float
-) -> float:
-    """Invert ``truncation_bias_curve`` for a measured relative Doppler offset."""
-    offsets = np.linspace(-0.95, 0.95, 191) * processed_bandwidth
-    readings = truncation_bias_curve(processed_bandwidth, sampling_rate, offsets)
-    ok = np.isfinite(readings)
-    offsets, readings = offsets[ok], readings[ok]
-    order = np.argsort(readings)
-    return float(np.interp(measured, readings[order], offsets[order]))
+    return 1.0 / abs(gain) if gain != 0 else float("inf")
 
 
 # ----------------------------------------------------------------------------------
@@ -1077,315 +848,21 @@ def map_drift(
     return 0.5 * frame.kin.v_eff * float(slope), r2, walk
 
 
-# ----------------------------------------------------------------------------------
-# Heading and relocation
-# ----------------------------------------------------------------------------------
-
-
-def hull_axis(
-    hull: NDArray[np.bool_],
-    intensity: NDArray[np.floating[Any]],
-    enu_steps: NDArray[np.float64],
-) -> tuple[NDArray[np.float64] | None, float]:
-    """Principal hull axis (unit ground EN vector) and its elongation (major/minor)."""
-    rr, cc = np.nonzero(hull)
-    if rr.size < 3:
-        return None, 0.0
-    w = intensity[rr, cc]
-    xy = rr[:, None] * enu_steps[0][None, :] + cc[:, None] * enu_steps[1][None, :]
-    mean = np.average(xy, axis=0, weights=w)
-    d = xy - mean
-    cov = (d * w[:, None]).T @ d / np.sum(w)
-    vals, vecs = np.linalg.eigh(cov)
-    major = vecs[:, 1]
-    elong = math.sqrt(vals[1] / vals[0]) if vals[0] > 0 else float("inf")
-    return major / np.linalg.norm(major), elong
-
-
-def _heading_deg(direction: NDArray[np.float64]) -> float:
-    """Compass heading (deg from North, clockwise) of an EN vector."""
-    return math.degrees(math.atan2(direction[0], direction[1])) % 360.0
-
-
-def _dedrifted_look_sum(
-    looks: list[tuple[float, NDArray[np.complex64]]],
-    targets: Sequence[CurveTarget],
-) -> NDArray[np.float64] | None:
-    """Incoherent sum of the looks, each shifted onto the mean look position.
-
-    Removing the drift leaves a sharper hull for the heading fit.
-    """
-    if not targets:
-        return None
-    mean_col = float(np.mean([t.col for t in targets]))
-    total = np.zeros(looks[0][1].shape)
-    for t in targets:
-        shift = int(round(mean_col - t.col))
-        total += np.roll(np.abs(looks[t.look][1]) ** 2, shift, axis=1)
-    return total
-
-
-def _solve_doppler(
-    chip: SlcChip,
-    frame: _LocalFrame,
-    f_ship: float,
-    reference: Callable[[float], float],
-    name: str,
-    params: RelocationParameters,
-) -> tuple[DopplerSolution, NDArray[np.float64], int]:
-    """Newton iteration of reference Doppler at the true position (steps 3 to 5).
-
-    Solves ``df = f_ship - f_ref(t_img - df / Ka)`` with Ka re-evaluated at each new
-    true position, until that position moves less than ``position_tolerance_m``.
-    """
-    geometry = chip.geometry
-    ka = frame.kin.fm_rate
-    df = f_ship - reference(frame.t_img)
-    p_true = frame.p_img
-    converged = False
-    iterations = 0
-    for iterations in range(1, params.max_iterations + 1):
-        t_true = frame.t_img - df / ka
-        h = 1e-4
-        slope = (reference(t_true + h) - reference(t_true - h)) / (2.0 * h)
-        g = df - (f_ship - reference(t_true))
-        gp = 1.0 - slope / ka
-        df = df - g / gp if gp != 0 else df
-        t_true = frame.t_img - df / ka
-        p_new = geometry.orbit.geocode(
-            frame.r_img, t_true, geometry.scene_height, p_true
-        )
-        ka = geometry.kinematics(t_true, p_new).fm_rate
-        moved = float(np.linalg.norm(p_new - p_true))
-        p_true = p_new
-        if moved < params.position_tolerance_m and abs(g) < 1e-6 * max(1.0, abs(df)):
-            converged = True
-            break
-    dt = df / ka
-    solution = DopplerSolution(
-        reference=name,
-        df_hz=df,
-        v_r=geometry.wavelength * df / 2.0,
-        dt_s=dt,
-        dx_m=frame.kin.v_ground * dt,
-        converged=converged,
-    )
-    return solution, p_true, iterations
-
-
-def relocate_mover(
+def along_track_velocity(
     chip: SlcChip,
     control_points: Sequence[Any],
     params: RelocationParameters | None = None,
-) -> MoverEstimate:
-    """Estimate the true position of the ship imaged along the curve.
+) -> tuple[float | None, float | None, list[CurveTarget]]:
+    """Map-drift along-track velocity (m/s), its fit R^2 and the per-look targets.
 
-    See the module docstring for the pipeline; velocities are in m/s with ``v_r > 0``
-    towards the radar and ``v_gr = v_r / sin(theta_inc)``.
+    For the optional ``v_a`` consistency check of the two-click relocation only; its
+    sign is not yet validated.
     """
     params = params or RelocationParameters()
-    geometry = chip.geometry
-    flags = [FLAG_SIGN_UNVERIFIED]
-    if geometry.instrument_mode not in ("spotlight", "dwell"):
-        flags.append(FLAG_MODE_NOT_SPOTLIGHT)
-
-    frame0 = _local_frame(chip, *_curve_centre(chip, control_points))
+    frame = _local_frame(chip, *_curve_centre(chip, control_points))
     masks = build_curve_masks(
-        chip, control_points, params, frame0.row_spacing_m, frame0.col_spacing_m
+        chip, control_points, params, frame.row_spacing_m, frame.col_spacing_m
     )
-    window = chip.data[masks.window]
-    intensity = np.abs(window) ** 2
-    hull, ring, _ = hull_and_clutter_masks(
-        intensity, masks.corridor, masks.ring, params
-    )
-    r_off, c_off = masks.window[0].start, masks.window[1].start
-
-    # Imaged position: intensity centroid of the hull.
-    if hull.any():
-        rr, cc = np.nonzero(hull)
-        w = intensity[rr, cc]
-        row_c = float(np.sum(rr * w) / np.sum(w)) + r_off
-        col_c = float(np.sum(cc * w) / np.sum(w)) + c_off
-    else:
-        row_c, col_c = frame0.row, frame0.col
-    frame = _local_frame(chip, row_c, col_c)
-    imaged_lonlat = chip.lonlat(row_c, col_c)
-
-    # Doppler on hull and ring. The hull is widened along azimuth so the estimator
-    # sees the scatterers' sidelobes too; a lag-one sum over the mainlobe alone is
-    # biased by the sinc's sign changes.
-    dilation = int(round(params.hull_dilation_m / frame.col_spacing_m))
-    doppler_mask = dilate_columns(hull, dilation) & masks.corridor
-    bandwidth = geometry.processed_azimuth_bandwidth
-    ship = estimate_doppler(
-        window, doppler_mask, frame.dt_col, bandwidth, params.doppler_estimator
-    )
-    ring_est = estimate_doppler(
-        window, ring, frame.dt_col, bandwidth, params.doppler_estimator
-    )
-    spread = doppler_spread(window, doppler_mask, frame.dt_col)
-    dc_img = geometry.doppler_centroid(frame.t_img, frame.r_img)
-    base = dc_img if params.slc_basebanded else 0.0
-    f_ship_raw = ship.frequency_hz + base
-    if ring_est.coherence >= params.min_ring_coherence:
-        f_ring = ring_est.frequency_hz + base
-    else:
-        flags.append(FLAG_RING_UNRELIABLE)
-        f_ring = dc_img
-
-    # Truncation bias acts on the offset from the processing window, which is
-    # centred on the processor's Doppler centroid at the imaged position.
-    sampling = 1.0 / geometry.azimuth_time_spacing
-    relative = f_ship_raw - dc_img
-    f_ship = dc_img + correct_truncation(relative, bandwidth, sampling)
-    if abs(relative) > 0.4 * bandwidth:
-        flags.append(FLAG_NEAR_BANDWIDTH_EDGE)
-    if ship.coherence < params.min_coherence:
-        flags.append(FLAG_LOW_COHERENCE)
-    if ship.n_samples < params.min_samples:
-        flags.append(FLAG_FEW_SAMPLES)
-
-    dcdt = geometry.doppler_centroid_rate(frame.t_img, frame.r_img)
-    gain = 1.0 - dcdt / frame.kin.fm_rate
-    amplification = 1.0 / abs(gain) if gain != 0 else float("inf")
-    if amplification > params.max_amplification:
-        flags.append(FLAG_ILL_CONDITIONED)
-
-    def meta_reference(t: float) -> float:
-        return geometry.doppler_centroid(t, frame.r_img)
-
-    ring_bias = f_ring - dc_img
-
-    def ring_reference(t: float) -> float:
-        return geometry.doppler_centroid(t, frame.r_img) + ring_bias
-
-    sol_meta, p_meta, it_meta = _solve_doppler(
-        chip, frame, f_ship, meta_reference, "metadata", params
-    )
-    sol_ring, _, _ = _solve_doppler(chip, frame, f_ship, ring_reference, "ring", params)
-    # Once ill-conditioned, both solutions are amplified noise; skip their checks.
-    if FLAG_ILL_CONDITIONED not in flags:
-        if abs(sol_meta.v_r - sol_ring.v_r) > params.reference_disagreement_mps:
-            flags.append(FLAG_REFERENCE_DISAGREEMENT)
-        if not (sol_meta.converged and sol_ring.converged):
-            flags.append(FLAG_NOT_CONVERGED)
-        span = geometry.wavelength * geometry.acquisition_prf / 2.0
-        if abs(sol_meta.v_r) > 0.25 * span:
-            flags.append(FLAG_NEAR_AMBIGUITY)
-
-    # Sub-aperture looks: map drift and a drift-free hull for the heading.
     targets = _find_targets(chip, params, frame, masks)
-    v_along, r2, walk = map_drift(targets, frame)
-    looks = subaperture_looks(window, params.n_looks, bandwidth, frame.dt_col)
-    look_sum = _dedrifted_look_sum(looks, targets)
-    if look_sum is None:
-        look_sum = intensity
-    hull_looks, _, _ = hull_and_clutter_masks(
-        look_sum, masks.corridor, masks.ring, params
-    )
-    axis, elongation = hull_axis(hull_looks, look_sum, frame.enu_steps)
-    if axis is None or elongation < 2.0:
-        flags.append(FLAG_HEADING_UNRELIABLE)
-    if len(targets) < params.min_looks:
-        flags.append(FLAG_FEW_LOOKS)
-
-    sin_inc = math.sin(math.radians(geometry.incidence_angle_deg))
-    towards_radar = -frame.ground_range_dir
-    doppler_valid = (
-        FLAG_ILL_CONDITIONED not in flags
-        and FLAG_LOW_COHERENCE not in flags
-        and FLAG_FEW_SAMPLES not in flags
-    )
-    cos_along = float(axis @ frame.along_track_dir) if axis is not None else 0.0
-    if v_along is not None and axis is not None:
-        if abs(cos_along) < params.min_heading_cosine:
-            flags.append(FLAG_HEADING_NEAR_RANGE)
-    drift_valid = (
-        v_along is not None
-        and axis is not None
-        and FLAG_HEADING_UNRELIABLE not in flags
-        and len(targets) >= params.min_looks
-        and abs(cos_along) >= params.min_heading_cosine
-    )
-
-    method = METHOD_NONE
-    v_r = 0.0
-    speed: float | None = None
-    heading: float | None = None
-    confidence = 0.0
-    p_true = frame.p_img
-    solution: DopplerSolution | None = None
-    iterations = 0
-    if doppler_valid:
-        method = METHOD_DOPPLER
-        solution, p_true, iterations = sol_meta, p_meta, it_meta
-        v_r = solution.v_r
-        if axis is not None:
-            cos_alpha = float(axis @ towards_radar)
-            if abs(cos_alpha) < params.min_heading_cosine:
-                flags.append(FLAG_HEADING_NEAR_AZIMUTH)
-            else:
-                v_gr = v_r / sin_inc
-                speed = abs(v_gr / cos_alpha)
-                heading = _heading_deg(axis * math.copysign(1.0, v_gr * cos_alpha))
-        confidence = (
-            ship.coherence
-            * min(1.0, ship.n_samples / (4.0 * params.min_samples))
-            / max(1.0, amplification)
-        )
-    elif drift_valid:
-        method = METHOD_MAP_DRIFT
-        speed = abs(v_along / cos_along)
-        direction = axis * math.copysign(1.0, v_along * cos_along)
-        heading = _heading_deg(direction)
-        v_r = speed * float(direction @ towards_radar) * sin_inc
-        # Zero reference: df is known, only the geocoding iteration remains.
-        solution, p_true, iterations = _solve_doppler(
-            chip,
-            frame,
-            2.0 * v_r / geometry.wavelength,
-            lambda _t: 0.0,
-            "map_drift",
-            params,
-        )
-        confidence = max(0.0, r2 or 0.0) * min(1.0, len(targets) / params.n_looks)
-        confidence *= min(1.0, abs(cos_along))
-    else:
-        flags.append(FLAG_NO_VALID_ESTIMATE)
-
-    lat, lon, _ = ecef_to_geodetic(p_true)
-    hull_full = np.zeros(chip.shape, dtype=bool)
-    hull_full[masks.window] = hull
-    ring_full = np.zeros(chip.shape, dtype=bool)
-    ring_full[masks.window] = ring
-    return MoverEstimate(
-        method=method,
-        imaged_lonlat=imaged_lonlat,
-        true_lonlat=(lon, lat),
-        v_r=v_r,
-        v_gr=v_r / sin_inc,
-        df_hz=solution.df_hz if solution else 0.0,
-        dt_s=solution.dt_s if solution else 0.0,
-        dx_m=solution.dx_m if solution else 0.0,
-        speed=speed,
-        heading_deg=heading,
-        confidence=float(min(max(confidence, 0.0), 1.0)),
-        flags=flags,
-        f_ship_hz=f_ship,
-        f_ref_ring_hz=f_ring,
-        f_ref_meta_hz=dc_img,
-        coherence=ship.coherence,
-        n_samples=ship.n_samples,
-        amplification=amplification,
-        doppler_spread_hz=spread,
-        doppler_meta=sol_meta,
-        doppler_ring=sol_ring,
-        v_along=v_along,
-        v_along_fit_r2=r2,
-        range_walk_rate=walk,
-        hull_axis_deg=_heading_deg(axis) % 180.0 if axis is not None else None,
-        targets=targets,
-        hull_mask=hull_full,
-        ring_mask=ring_full,
-        iterations=iterations,
-    )
+    v_along, r2, _ = map_drift(targets, frame)
+    return v_along, r2, targets

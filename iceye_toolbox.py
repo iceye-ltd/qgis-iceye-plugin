@@ -45,6 +45,7 @@ from .gui.curve_editor import CurveEditorDialog
 from .gui.lens_tool import LensToolbarAction
 from .gui.measuring_tool import MeasuringToolbarAction
 from .gui.metadata_widget import MetadataWidget
+from .gui.mover_relocation_tool import MoverRelocationDialog
 from .gui.stac_catalog_widget import StacCatalogWidget
 from .gui.toolbar_button_policy import ToolbarButtonPolicy
 
@@ -115,6 +116,7 @@ class IceyeToolbox:
         self.export_layer_action = None
         # Built on first use; it reads the active SLC layer only when asked to.
         self.curve_editor_dialog: CurveEditorDialog | None = None
+        self.mover_relocation_dialog: MoverRelocationDialog | None = None
         self.mandala_toolbar_action = MandalaToolbarAction(
             self.iface,
             metadata_provider=self.metadata_provider,
@@ -284,8 +286,17 @@ class IceyeToolbox:
             text=self.tr("Curve Editor"),
             callback=self.open_curve_editor,
             parent=self.iface.mainWindow(),
-            status_tip="Fit a curve to a moving ship in an SLC and estimate its "
-            "true position",
+            status_tip="Fit a curve to a moving target in an SLC and use it as the "
+            "Mover Relocation target",
+        )
+
+        self.add_action(
+            icon_path=":/plugins/iceye_toolbox/mover-relocation.svg",
+            text=self.tr("Mover Relocation"),
+            callback=self.open_mover_relocation,
+            parent=self.iface.mainWindow(),
+            status_tip="Relocate a moving target in a Spotlight / Dwell SLC: click "
+            "the target, then two points on its road, rail, bridge or wake",
         )
 
         self.run()
@@ -329,6 +340,11 @@ class IceyeToolbox:
             self.curve_editor_dialog.close()
             self.curve_editor_dialog.deleteLater()
             self.curve_editor_dialog = None
+
+        if self.mover_relocation_dialog is not None:
+            self.mover_relocation_dialog.close()
+            self.mover_relocation_dialog.deleteLater()
+            self.mover_relocation_dialog = None
 
         for action in self.actions:
             try:
@@ -411,9 +427,28 @@ class IceyeToolbox:
                 metadata_provider=self.metadata_provider,
                 parent=self.iface.mainWindow(),
             )
+            self.curve_editor_dialog.target_located.connect(
+                self._on_curve_target_located
+            )
         self.curve_editor_dialog.show()
         self.curve_editor_dialog.raise_()
         self.curve_editor_dialog.activateWindow()
+
+    def open_mover_relocation(self) -> MoverRelocationDialog:
+        """Show the Mover Relocation panel, creating it on first use."""
+        if self.mover_relocation_dialog is None:
+            self.mover_relocation_dialog = MoverRelocationDialog(
+                self.iface,
+                metadata_provider=self.metadata_provider,
+                parent=self.iface.mainWindow(),
+            )
+        self.mover_relocation_dialog.show()
+        self.mover_relocation_dialog.raise_()
+        return self.mover_relocation_dialog
+
+    def _on_curve_target_located(self, target, layer) -> None:
+        """Hand a target found in the Curve Editor to the Mover Relocation tool."""
+        self.open_mover_relocation().set_target(target, layer)
 
     def _on_stac_visibility_changed(self, visible: bool) -> None:
         if not self.stac_catalog_action:

@@ -70,8 +70,10 @@ def geometry(crop_path) -> ProductGeometry:
 
 @pytest.fixture(scope="module")
 def pixel_to_lonlat(crop_path):
-    """GCP geolocation of the crop fixture."""
-    return gcp_pixel_to_lonlat(crop_path)
+    """GCP geolocation of the crop fixture, released before GDAL shuts down."""
+    transform = gcp_pixel_to_lonlat(crop_path)
+    yield transform
+    transform.close()
 
 
 @pytest.fixture(scope="module")

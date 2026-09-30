@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import numpy as np
+import pytest
 from qgis.core import QgsProject, QgsRectangle
 from qgis.PyQt.QtCore import QPointF
 
@@ -63,16 +64,16 @@ class TestCurveEditorWidget:
 
 
 class TestCurveEditorDialog:
-    """Loading the SLC view and relocating along the curve."""
+    """Loading the SLC view and locating the target along the curve."""
 
     def test_search_without_chip_reports(self, qgis_iface):
-        """Search before Load view explains what to do."""
+        """Use as target before Load view explains what to do."""
         dialog = CurveEditorDialog()
         dialog._on_search_clicked()
         assert "Load" in dialog._status.text()
 
-    def test_load_view_and_search_writes_layers(self, qgis_iface, base_crop_layer):
-        """The view is read as a chip and Search adds point and line features."""
+    def test_load_view_and_use_as_target(self, qgis_iface, base_crop_layer):
+        """The view is read as a chip; Use as target emits the hull centroid."""
         project = QgsProject.instance()
         project.addMapLayer(base_crop_layer)
         qgis_iface.setActiveLayer(base_crop_layer)
@@ -83,21 +84,15 @@ class TestCurveEditorDialog:
         rows, cols = dialog.chip.shape
         assert rows > 10 and cols > 100
         assert np.iscomplexobj(dialog.chip.data)
+        assert dialog.display_height == pytest.approx(-2.653, abs=1e-3)
 
+        received = []
+        dialog.target_located.connect(lambda t, layer: received.append((t, layer)))
         dialog._on_search_clicked()
-        estimate = dialog.last_estimate
-        assert estimate is not None, dialog._status.text()
-        assert "Method" in dialog._status.text()
-
-        points = project.mapLayer(dialog._point_layer_id)
-        lines = project.mapLayer(dialog._line_layer_id)
-        assert points.featureCount() == 1
-        assert lines.featureCount() == 1
-        feature = next(points.getFeatures())
-        assert feature["method"] == estimate.method
-        assert "sign_unverified" in feature["flags"]
-
-        # A second search appends to the same layers.
-        dialog._on_search_clicked()
-        assert points.featureCount() == 2
-        project.removeMapLayers([points.id(), lines.id(), base_crop_layer.id()])
+        target = dialog.last_target
+        assert target is not None, dialog._status.text()
+        assert received == [(target, base_crop_layer)]
+        assert "Imaged position" in dialog._status.text()
+        assert target.height == dialog.display_height
+        assert 0 <= target.row < rows and 0 <= target.col < cols
+        project.removeMapLayers([base_crop_layer.id()])
