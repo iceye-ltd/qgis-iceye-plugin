@@ -141,6 +141,39 @@ class TestMoverRelocationDialog:
         dialog.close()
         assert qgis_iface.mapCanvas().mapTool() is not dialog.map_tool
 
+    def test_output_layers_keep_slc_active(self, qgis_iface, slc_layer):
+        """New output layers do not steal the active layer from the SLC.
+
+        QGIS makes every added layer the active one; mimic that, then check the
+        first band leaves the SLC active and a second target still works.
+        """
+        project = QgsProject.instance()
+
+        def activate_added(layers):
+            qgis_iface.setActiveLayer(layers[-1])
+
+        project.layersAdded.connect(activate_added)
+        try:
+            dialog = self._dialog(qgis_iface)
+            assert dialog.start()
+            _, imaged, on_road = _mover(dialog.scene)
+            dialog.handle_click(imaged)
+            assert dialog.outputs.layer("band") is not None
+            assert qgis_iface.activeLayer() is slc_layer
+
+            # Even if another layer is made active, the tool keeps its SLC.
+            qgis_iface.setActiveLayer(dialog.outputs.layer("band"))
+            assert dialog.start(), dialog._step_label.text()
+            assert qgis_iface.activeLayer() is slc_layer
+            dialog.handle_click(imaged)
+            dialog.handle_click(on_road(-60.0))
+            dialog.handle_click(on_road(60.0))
+            assert dialog.step == STEP_DONE, dialog._result.text()
+            assert qgis_iface.activeLayer() is slc_layer
+            assert dialog.outputs.layer("band").featureCount() == 2
+        finally:
+            project.layersAdded.disconnect(activate_added)
+
     def test_constraint_must_straddle(self, qgis_iface, slc_layer):
         """Two clicks on one side are rejected and the constraint step restarts."""
         dialog = self._dialog(qgis_iface)

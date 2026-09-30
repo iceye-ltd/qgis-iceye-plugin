@@ -123,6 +123,7 @@ class MoverScene:
     display_height: float
     pixel_to_lonlat: Any
     lonlat_to_pixel: Any
+    layer_id: str = ""
 
     @classmethod
     def from_layer(cls, layer: QgsRasterLayer) -> MoverScene:
@@ -135,6 +136,7 @@ class MoverScene:
             display_height=gcp_mean_height(source, geometry.scene_height),
             pixel_to_lonlat=gcp_pixel_to_lonlat(source),
             lonlat_to_pixel=gcp_lonlat_to_pixel(source),
+            layer_id=layer.id(),
         )
 
     def ecef(self, lon: float, lat: float):
@@ -282,10 +284,15 @@ def _style(layer: QgsVectorLayer, key: str) -> None:
 
 
 class OutputLayers:
-    """EPSG:4326 memory layers, created on first use and reused afterwards."""
+    """EPSG:4326 memory layers, created on first use and reused afterwards.
 
-    def __init__(self) -> None:
+    QGIS makes every newly added layer the active one; with ``iface`` the previously
+    active layer (the SLC) is restored so tools reading ``activeLayer()`` keep working.
+    """
+
+    def __init__(self, iface=None) -> None:
         """Start without layers."""
+        self.iface = iface
         self.ids: dict[str, str] = {}
 
     def layer(self, key: str) -> QgsVectorLayer | None:
@@ -304,8 +311,11 @@ class OutputLayers:
             )
             layer.updateFields()
             _style(layer, key)
+            active = self.iface.activeLayer() if self.iface is not None else None
             QgsProject.instance().addMapLayer(layer)
             self.ids[key] = layer.id()
+            if active is not None and self.iface.activeLayer() is not active:
+                self.iface.setActiveLayer(active)
         feature = QgsFeature(layer.fields())
         for name, value in attributes.items():
             if layer.fields().indexOf(name) >= 0:
@@ -374,7 +384,7 @@ class MoverRelocationDialog(QDialog):
         self.clicks: list[QgsPointXY] = []
         self.last_result: Relocation | None = None
         self.step = STEP_IDLE
-        self.outputs = OutputLayers()
+        self.outputs = OutputLayers(iface)
 
         self.setWindowTitle(_tr("Mover Relocation"))
         self.setMinimumWidth(420)
@@ -510,19 +520,34 @@ class MoverRelocationDialog(QDialog):
         if canvas.mapTool() is not self.map_tool:
             canvas.setMapTool(self.map_tool)
 
-    def _ensure_scene(self, layer: QgsRasterLayer | None) -> bool:
-        if not isinstance(layer, QgsRasterLayer) or layer.bandCount() < 2:
+    def _slc_layer(self, layer) -> QgsRasterLayer | None:
+        """``layer`` if it is an SLC, else the SLC already in use if still loaded."""
+        if isinstance(layer, QgsRasterLayer) and layer.bandCount() >= 2:
+            return layer
+        if self.scene is not None:
+            current = QgsProject.instance().mapLayer(self.scene.layer_id)
+            if isinstance(current, QgsRasterLayer):
+                return current
+        return None
+
+    def _ensure_scene(self, layer) -> bool:
+        layer = self._slc_layer(layer)
+        if layer is None:
             self._step_label.setText(_tr("Select an ICEYE SLC layer first."))
             return False
         if self.metadata_provider.get(layer) is None:
             self._step_label.setText(_tr("The active layer has no ICEYE metadata."))
             return False
-        if self.scene is None or self.scene.layer is not layer:
+        if self.scene is None or self.scene.layer_id != layer.id():
             try:
                 self.scene = MoverScene.from_layer(layer)
             except Exception as e:
                 self._step_label.setText(_tr("Cannot read the SLC: {e}").format(e=e))
                 return False
+        # Keep the SLC active so the tool, the Curve Editor and the toolbar
+        # policy all keep seeing the image layer.
+        if self.iface.activeLayer() is not layer:
+            self.iface.setActiveLayer(layer)
         return True
 
     def start(self) -> bool:
