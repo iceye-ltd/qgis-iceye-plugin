@@ -389,6 +389,8 @@ class ProductGeometry:
     orbit: Orbit
     dc_times: NDArray[np.float64]
     dc_coeffs: list[NDArray[np.float64]]
+    # Echo collection window (start_datetime .. end_datetime), seconds.
+    acquisition_window: tuple[float, float] | None = None
 
     @classmethod
     def from_properties(cls, props: dict[str, Any]) -> ProductGeometry:
@@ -419,6 +421,9 @@ class ProductGeometry:
         processing_prf = props.get("iceye:processing_prf") or props.get(
             "iceye:acquisition_prf"
         )
+        window = None
+        if props.get("start_datetime") and props.get("end_datetime"):
+            window = (seconds(props["start_datetime"]), seconds(props["end_datetime"]))
         incidence = props.get("view:incidence_angle")
         if incidence is None:
             incidence = 0.5 * (
@@ -442,6 +447,7 @@ class ProductGeometry:
             orbit=orbit,
             dc_times=dc_times,
             dc_coeffs=dc_coeffs,
+            acquisition_window=window,
         )
 
     @property
