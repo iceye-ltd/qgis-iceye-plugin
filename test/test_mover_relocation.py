@@ -18,6 +18,7 @@ import pytest
 from iceye_toolbox.core.mover_relocation import (
     FLAG_BAND_CLIPPED,
     FLAG_CONSTRAINT_PARALLEL,
+    FLAG_HEADING_ESTIMATED,
     FLAG_HEADING_UNKNOWN,
     FLAG_IMPLAUSIBLE_SPEED,
     FLAG_OUTSIDE_BAND,
@@ -27,21 +28,26 @@ from iceye_toolbox.core.mover_relocation import (
     INDICATOR_GREEN,
     INDICATOR_RED,
     MODE_SINGLE_CLICK,
+    MODE_SINGLE_CLICK_AUTO,
     TARGET_CLASSES,
+    ConstraintAxis,
     ConstraintError,
     ImagedTarget,
     RelocationSettings,
     band_for_target,
     cursor_readout,
+    estimate_constraint_axis,
     image_time_limits,
     intersect_constraint,
     local_geometry,
     plausibility,
     relocate,
+    relocate_from_axis,
     relocate_single_click,
 )
 from iceye_toolbox.core.target_finder import (
     ProductGeometry,
+    SlcChip,
     ecef_to_geodetic,
     enu_basis,
     gcp_pixel_to_lonlat,
@@ -597,6 +603,85 @@ class TestSingleClick:
         )
         with pytest.raises(ConstraintError, match="inside the band"):
             relocate_single_click(geometry, target, off, TARGET_CLASSES["car"])
+
+
+class TestImageAxis:
+    """Single click with the road axis estimated from the image."""
+
+    ROWS, COLS = 300, 2600
+
+    def _chip(self, geometry, pixel_to_lonlat, heading_deg, contrast, seed=0):
+        """Speckle chip around the fixture centre with an 8 m wide line feature."""
+        rng = np.random.default_rng(seed)
+        shape = (self.ROWS, self.COLS)
+        data = rng.standard_normal(shape) + 1j * rng.standard_normal(shape)
+        chip = SlcChip(
+            data.astype(np.complex64),
+            int(CENTRE_COL) - self.COLS // 2,
+            int(CENTRE_ROW) - self.ROWS // 2,
+            geometry,
+            pixel_to_lonlat,
+        )
+        if contrast is not None:
+            steps = chip.pixel_enu_steps(self.ROWS / 2, self.COLS / 2)
+            rr, cc = np.mgrid[0 : self.ROWS, 0 : self.COLS]
+            en = (rr - self.ROWS / 2)[..., None] * steps[0] + (cc - self.COLS / 2)[
+                ..., None
+            ] * steps[1]
+            h = math.radians(heading_deg)
+            across = np.abs(en @ np.array([math.cos(h), -math.sin(h)]))
+            chip.data[across <= 4.0] *= math.sqrt(contrast)
+        return chip
+
+    @pytest.mark.parametrize("contrast", [3.0, 0.2])
+    @pytest.mark.parametrize("heading", [20.0, 100.0, 140.0])
+    def test_axis_of_bright_road_and_dark_wake(
+        self, geometry, pixel_to_lonlat, heading, contrast
+    ):
+        """The axis follows a line feature to a few degrees, with high coherence."""
+        chip = self._chip(geometry, pixel_to_lonlat, heading, contrast)
+        axis = estimate_constraint_axis(chip, self.ROWS / 2, self.COLS / 2)
+        estimated = math.degrees(math.atan2(*axis.direction_en)) % 180.0
+        error = abs((estimated - heading % 180.0 + 90.0) % 180.0 - 90.0)
+        assert error < 8.0
+        assert axis.coherence > 0.6
+
+    def test_speckle_has_no_axis(self, geometry, pixel_to_lonlat):
+        """Pure speckle stays below the coherence threshold."""
+        threshold = RelocationSettings().min_axis_coherence
+        for seed in range(3):
+            chip = self._chip(geometry, pixel_to_lonlat, 0.0, None, seed=seed)
+            axis = estimate_constraint_axis(chip, self.ROWS / 2, self.COLS / 2)
+            assert axis.coherence < threshold
+
+    def test_relocate_from_true_axis_matches_two_click(self, geometry, scene_point):
+        """Spawned points on the true road axis reproduce speed and heading."""
+        speed, heading = 12.0, 100.0
+        velocity = _ground_velocity(scene_point, speed, heading)
+        mover = simulate_mover(geometry, scene_point, velocity)
+        target = _imaged_target(geometry, mover)
+        h = math.radians(heading)
+        axis = ConstraintAxis(np.array([math.sin(h), math.cos(h)]), 0.9)
+        result = relocate_from_axis(
+            geometry,
+            target,
+            scene_point,
+            axis,
+            TARGET_CLASSES["car"],
+            RelocationSettings(range_residual=True),
+        )
+        assert result.mode == MODE_SINGLE_CLICK_AUTO
+        assert result.axis_coherence == 0.9
+        assert result.v_t == pytest.approx(speed, rel=0.015)
+        assert (
+            _angle_diff(result.heading_deg, _expected_heading(scene_point, velocity))
+            < 0.5
+        )
+        assert result.t_true == pytest.approx(mover.t_true, abs=2e-5)
+        assert FLAG_HEADING_ESTIMATED in result.flags
+        assert result.indicator == INDICATOR_AMBER
+        assert len(result.constraint_lonlat) == 2
+        assert result.attributes()["axis_coherence"] == 0.9
 
 
 class TestPlausibility:

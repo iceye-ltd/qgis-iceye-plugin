@@ -60,6 +60,7 @@ from qgis.PyQt.QtWidgets import (
 
 from ..core.metadata import MetadataProvider
 from ..core.mover_relocation import (
+    MODE_SINGLE_CLICK_AUTO,
     MPS_TO_KMH,
     MPS_TO_KNOTS,
     TARGET_CLASSES,
@@ -70,9 +71,11 @@ from ..core.mover_relocation import (
     RelocationSettings,
     band_for_target,
     cursor_readout,
+    estimate_constraint_axis,
     image_time_limits,
     locate_imaged_target,
     relocate,
+    relocate_from_axis,
     relocate_single_click,
 )
 from ..core.target_finder import (
@@ -187,7 +190,24 @@ def target_from_click(
     radius = (
         params.corridor_half_width_m + params.ring_gap_m + params.ring_width_m + 5.0
     )
-    dlat = radius / _METRES_PER_DEG
+    chip, row, col = chip_around(scene, lon, lat, radius, metadata_provider)
+    rows, cols = chip.shape
+    fraction = (
+        min(max(col / max(cols - 1, 1), 0.0), 1.0),
+        min(max(row / max(rows - 1, 1), 0.0), 1.0),
+    )
+    return locate_imaged_target(chip, [fraction] * 4, h, params)
+
+
+def chip_around(
+    scene: MoverScene,
+    lon: float,
+    lat: float,
+    radius_m: float,
+    metadata_provider: MetadataProvider,
+):
+    """SLC chip within ``radius_m`` of a point, and the point's chip (row, col)."""
+    dlat = radius_m / _METRES_PER_DEG
     dlon = dlat / max(math.cos(math.radians(lat)), 1e-6)
     extent = QgsRectangle(lon - dlon, lat - dlat, lon + dlon, lat + dlat)
     layer_crs = scene.layer.crs()
@@ -197,12 +217,7 @@ def target_from_click(
         ).transformBoundingBox(extent)
     chip = read_slc_chip(scene.layer, extent, metadata_provider)
     col, row = scene.lonlat_to_pixel(lon, lat)
-    rows, cols = chip.shape
-    fraction = (
-        min(max((col - chip.col0 - 0.5) / max(cols - 1, 1), 0.0), 1.0),
-        min(max((row - chip.row0 - 0.5) / max(rows - 1, 1), 0.0), 1.0),
-    )
-    return locate_imaged_target(chip, [fraction] * 4, h, params)
+    return chip, row - chip.row0 - 0.5, col - chip.col0 - 0.5
 
 
 # ----------------------------------------------------------------------------------
@@ -574,6 +589,22 @@ class MoverRelocationDialog(QDialog):
             )
         )
         self.single_check.toggled.connect(self._on_mode_toggled)
+        self.axis_check = QCheckBox(
+            _tr("Estimate the road direction from the image (rough heading)")
+        )
+        self.axis_check.setChecked(True)
+        self.axis_check.setEnabled(False)
+        self.axis_check.setToolTip(
+            _tr(
+                "With single click on: look about 50 m around the click for the "
+                "dominant linear feature (road edge, rail, deck or wake), place two "
+                "cyan points along it and compute speed and heading as with two "
+                "clicks. A rough estimate (about +-4 deg on clean features); check "
+                "the cyan points. Falls back to minimum speed only when the area "
+                "is not clearly linear."
+            )
+        )
+        self.single_check.toggled.connect(self.axis_check.setEnabled)
 
         form = QFormLayout()
         form.addRow(_tr("Target class"), self.class_combo)
@@ -583,6 +614,7 @@ class MoverRelocationDialog(QDialog):
         form.addRow(self.residual_check)
         form.addRow(self.extrapolate_check)
         form.addRow(self.single_check)
+        form.addRow(self.axis_check)
         legend = QLabel(
             _tr(
                 "<span style='color:#b8a000'>&#9632;</span> band of possible true "
@@ -859,6 +891,7 @@ class MoverRelocationDialog(QDialog):
         # Ships sit on the sea surface; other targets stay on the display surface.
         height = scene.geometry.scene_height if target_class.name == "ship" else None
         try:
+            note = ""
             if len(points) == 1:
                 result = relocate_single_click(
                     scene.geometry,
@@ -869,6 +902,8 @@ class MoverRelocationDialog(QDialog):
                     band=self.band,
                     target_height=height,
                 )
+                if self.axis_check.isChecked():
+                    result, note = self._with_image_axis(result, points[0], height)
             else:
                 result = relocate(
                     scene.geometry,
@@ -896,10 +931,61 @@ class MoverRelocationDialog(QDialog):
             self._result.setText(_tr("Relocation failed: {e}").format(e=e))
             return
         self.last_result = result
-        self._result.setText(format_relocation(result))
+        self._result.setText(format_relocation(result) + note)
+        if result.mode == MODE_SINGLE_CLICK_AUTO:
+            self._show_spawned_points(result)
         self._write_result(result)
         self._activate_tool()
         self._set_step(STEP_DONE)
+
+    def _with_image_axis(
+        self, basic: Relocation, point, height: float | None
+    ) -> tuple[Relocation, str]:
+        """Upgrade a single-click result with the image's road axis if it is clear."""
+        scene, settings = self.scene, self.settings()
+        click = self.clicks[0]
+        try:
+            chip, row, col = chip_around(
+                scene,
+                click.x(),
+                click.y(),
+                settings.axis_radius_m + 10.0,
+                self.metadata_provider,
+            )
+            axis = estimate_constraint_axis(chip, row, col, settings)
+        except Exception as e:
+            return basic, "<br>" + _tr("Road direction not estimated: {e}").format(e=e)
+        if axis.coherence < settings.min_axis_coherence:
+            return basic, "<br>" + _tr(
+                "No clear linear feature at the click (coherence {c:.2f}); heading "
+                "unknown. Use two clicks instead."
+            ).format(c=axis.coherence)
+        try:
+            result = relocate_from_axis(
+                scene.geometry,
+                self.target,
+                point,
+                axis,
+                self.target_class(),
+                settings,
+                band=self.band,
+                target_height=height,
+            )
+        except ConstraintError:
+            return basic, "<br>" + _tr(
+                "The estimated road direction runs along the band; heading unknown. "
+                "Use two clicks instead."
+            )
+        return result, "<br>" + _tr(
+            "Road direction estimated from the image (coherence {c:.2f}); check the "
+            "cyan points."
+        ).format(c=axis.coherence)
+
+    def _show_spawned_points(self, result: Relocation) -> None:
+        crs = QgsCoordinateReferenceSystem(WGS84)
+        spawned = _points(result.constraint_lonlat)
+        self._points_rb.setToGeometry(QgsGeometry.fromMultiPointXY(spawned), crs)
+        self._constraint_rb.setToGeometry(QgsGeometry.fromPolylineXY(spawned), crs)
 
     # ------------------------------------------------------------------
     # Output layers

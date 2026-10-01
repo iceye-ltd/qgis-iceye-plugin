@@ -300,8 +300,34 @@ in 6.4. One point does not give $\hat{\mathbf u}_{road}$, so:
 - plausibility uses $v_{t,min}$ for the speed checks, skips the geometry check and
   adds the soft flag `heading_unknown`, so the indicator is amber at best.
 
-Recovering direction from a single click would need automatic road / wake detection,
-which this tool deliberately does not do.
+Section 6.8 optionally recovers a rough direction from the image.
+
+### 6.8 Single click with an image-estimated axis (`estimate_constraint_axis`)
+A user decision reversing the original "no automatic road / wake detection" rule, as
+an option on top of 6.7. Around the click (radius `axis_radius_m`, 50 m):
+
+1. $|s|^2$ is block-averaged to cells of about `axis_cell_m` (2 m) of ground, which
+   also suppresses speckle, and $f = \log_{10}$ of it is differentiated per block.
+2. Gradients are mapped to ground (East, North) with the block Jacobian
+   $J = [\mathbf e_{row} b_r,\ \mathbf e_{col} b_c]$: $\nabla_{EN} f = J^{-T}\nabla_{ij} f$.
+3. The Gaussian-weighted ($\sigma = 25$ m) structure tensor
+   $T = \sum w\, \nabla f\, \nabla f^{\mathsf T}$ has eigenvalues $\lambda_1 \ge \lambda_2$; the
+   line axis is the eigenvector of $\lambda_2$ (gradients run across the edges of a
+   bright or dark linear feature), and the coherence is
+   $(\lambda_1 - \lambda_2)/(\lambda_1 + \lambda_2)$.
+
+If the coherence is at least `min_axis_coherence` (0.5), two points
+`axis_half_length_m` (40 m) either side of the click along the axis replace the two
+clicks of 6.3 / 6.4; the result is flagged `heading_estimated` (soft, amber at
+best). Otherwise, or if the axis runs along the band, the 6.7 result stands.
+
+Measured on synthetic 8 m features in speckle on the fixture geometry: axis errors
+of about $\pm$4° (random sign) and coherence 0.82 to 0.94 for bright roads and dark
+wakes, 0.07 to 0.12 for pure speckle. On the real fixture a weak edge of a port
+structure next to the click gave 0.38, below the threshold. Strong straight edges
+(quays, building rows) or sidelobe streaks of bright targets can still be taken for
+the road, so the spawned points are drawn for the user to check. A 4° axis error
+changes $v_t$ by about $\tan\phi \cdot 7\,\%$.
 
 ---
 

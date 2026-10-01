@@ -9,7 +9,11 @@ import pytest
 from qgis.core import Qgis, QgsMarkerLineSymbolLayer, QgsPointXY, QgsProject
 
 from iceye_toolbox.core.metadata import MetadataProvider
-from iceye_toolbox.core.mover_relocation import FLAG_BAND_CLIPPED, INDICATOR_AMBER
+from iceye_toolbox.core.mover_relocation import (
+    FLAG_BAND_CLIPPED,
+    INDICATOR_AMBER,
+    ConstraintAxis,
+)
 from iceye_toolbox.core.target_finder import ecef_to_geodetic, lonlat_to_ecef
 from iceye_toolbox.gui.curve_editor import CurveEditorDialog
 from iceye_toolbox.gui.mover_relocation_tool import (
@@ -100,6 +104,7 @@ class TestMoverRelocationDialog:
             dialog.residual_check,
             dialog.extrapolate_check,
             dialog.single_check,
+            dialog.axis_check,
             dialog.start_button,
         ):
             assert len(control.toolTip()) > 20, control
@@ -237,6 +242,7 @@ class TestMoverRelocationDialog:
         """With the toggle on, target click + one constraint click finishes."""
         dialog = self._dialog(qgis_iface)
         dialog.single_check.setChecked(True)
+        dialog.axis_check.setChecked(False)
         assert dialog.start()
         mover, imaged, on_road = _mover(dialog.scene)
         dialog.handle_click(imaged)
@@ -252,6 +258,54 @@ class TestMoverRelocationDialog:
         assert feature["mode"] == "single_click"
         assert dialog.outputs.layer("track") is None
         assert qgis_iface.mapCanvas().mapTool() is dialog.map_tool
+
+    def test_single_click_with_image_axis(self, qgis_iface, slc_layer, monkeypatch):
+        """Single click + image axis gives speed and heading from spawned points."""
+        import iceye_toolbox.gui.mover_relocation_tool as tool
+
+        dialog = self._dialog(qgis_iface)
+        dialog.single_check.setChecked(True)
+        assert dialog.axis_check.isEnabled() and dialog.axis_check.isChecked()
+        assert dialog.start()
+        heading = 100.0
+        mover, imaged, on_road = _mover(dialog.scene, speed=10.0, heading=heading)
+        h = math.radians(heading)
+        monkeypatch.setattr(
+            tool,
+            "estimate_constraint_axis",
+            lambda *a, **k: ConstraintAxis(np.array([math.sin(h), math.cos(h)]), 0.8),
+        )
+        dialog.handle_click(imaged)
+        dialog.handle_click(on_road(0.0))
+        assert dialog.step == STEP_DONE, dialog._result.text()
+        result = dialog.last_result
+        assert result.mode == "single_click_auto"
+        assert result.v_t == pytest.approx(10.0, rel=0.02)
+        assert "estimated from the image" in dialog._result.text()
+        assert dialog._points_rb.numberOfVertices() == 2
+        feature = next(dialog.outputs.layer("true").getFeatures())
+        assert feature["mode"] == "single_click_auto"
+        assert feature["axis_coherence"] == pytest.approx(0.8)
+
+    def test_single_click_axis_falls_back(self, qgis_iface, slc_layer, monkeypatch):
+        """Without a clear linear feature the result keeps minimum speed only."""
+        import iceye_toolbox.gui.mover_relocation_tool as tool
+
+        dialog = self._dialog(qgis_iface)
+        dialog.single_check.setChecked(True)
+        assert dialog.start()
+        _, imaged, on_road = _mover(dialog.scene)
+        monkeypatch.setattr(
+            tool,
+            "estimate_constraint_axis",
+            lambda *a, **k: ConstraintAxis(np.array([1.0, 0.0]), 0.05),
+        )
+        dialog.handle_click(imaged)
+        dialog.handle_click(on_road(0.0))
+        assert dialog.step == STEP_DONE
+        assert dialog.last_result.mode == "single_click"
+        assert dialog.last_result.v_t is None
+        assert "No clear linear feature" in dialog._result.text()
 
     def test_constraint_must_straddle(self, qgis_iface, slc_layer):
         """Two clicks on one side are rejected and the constraint step restarts."""

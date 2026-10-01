@@ -64,12 +64,20 @@ FLAG_V_A_INCONSISTENT = "v_a_inconsistent"
 FLAG_BAND_CLIPPED = "band_clipped"
 # Single-click mode: no road direction, so no ground speed or heading.
 FLAG_HEADING_UNKNOWN = "heading_unknown"
+# Single click with the road axis estimated from the image: rough heading.
+FLAG_HEADING_ESTIMATED = "heading_estimated"
 SOFT_FLAGS = frozenset(
-    {FLAG_BAND_CLIPPED, FLAG_PROBABLY_STATIONARY, FLAG_HEADING_UNKNOWN}
+    {
+        FLAG_BAND_CLIPPED,
+        FLAG_PROBABLY_STATIONARY,
+        FLAG_HEADING_UNKNOWN,
+        FLAG_HEADING_ESTIMATED,
+    }
 )
 
 MODE_TWO_CLICK = "two_click"
 MODE_SINGLE_CLICK = "single_click"
+MODE_SINGLE_CLICK_AUTO = "single_click_auto"
 
 INDICATOR_GREEN = "green"
 INDICATOR_AMBER = "amber"
@@ -107,6 +115,13 @@ class RelocationSettings:
     # True slant range is R_img + R v_r^2 / (2 V_eff^2): below 1 m at car speeds.
     range_residual: bool = False
     allow_extrapolation: bool = False
+    # Single click with an image-estimated road axis (estimate_constraint_axis).
+    axis_radius_m: float = 50.0
+    axis_cell_m: float = 2.0
+    # Speckle ~0.1, clean roads / wakes ~0.8-0.9; weak edges of nearby structures
+    # (~0.4 seen on the fixture) are rejected, strong straight edges are not.
+    min_axis_coherence: float = 0.5
+    axis_half_length_m: float = 40.0
     # Along-track velocity check from map drift; off until its sign is validated.
     v_a_check: bool = False
     v_a_k_sigma: float = 3.0
@@ -580,6 +595,7 @@ class Relocation:
     constraint_lonlat: list[tuple[float, float]]
     track_lonlat: list[tuple[float, float]]
     mode: str = MODE_TWO_CLICK
+    axis_coherence: float | None = None
     sign_validated: bool = SIGN_VALIDATED
 
     @property
@@ -607,6 +623,7 @@ class Relocation:
             "target_class": self.target_class.name,
             "flags": ",".join(self.flags),
             "indicator": self.indicator,
+            "axis_coherence": self.axis_coherence,
             "sign_validated": self.sign_validated,
         }
 
@@ -816,3 +833,115 @@ def relocate_single_click(
         track_lonlat=[],
         mode=MODE_SINGLE_CLICK,
     )
+
+
+# ----------------------------------------------------------------------------------
+# Single click with an image-estimated constraint axis
+# ----------------------------------------------------------------------------------
+
+
+@dataclass
+class ConstraintAxis:
+    """Dominant linear direction of the image around a click.
+
+    ``direction_en`` is a horizontal (East, North) unit vector; its sign is
+    arbitrary (the travel sense comes from ``v_r``). ``coherence`` is
+    ``(l1 - l2) / (l1 + l2)`` of the structure tensor: 0 isotropic, 1 one direction.
+    """
+
+    direction_en: NDArray[np.float64]
+    coherence: float
+
+
+def estimate_constraint_axis(
+    chip: SlcChip,
+    row: float,
+    col: float,
+    settings: RelocationSettings | None = None,
+) -> ConstraintAxis:
+    """Axis of the road / rail / deck / wake around chip pixel ``(row, col)``.
+
+    The intensity is block-averaged to about ``axis_cell_m`` ground cells (which also
+    suppresses speckle), its log is differentiated, and the gradients are mapped to
+    ground metres with the local pixel Jacobian. Within ``axis_radius_m`` (Gaussian
+    weighted) the structure tensor's minor eigenvector is the line direction: the
+    edges of a bright or dark linear feature have gradients across it. Heuristic:
+    sidelobe streaks of nearby bright targets pull it along azimuth or range.
+    """
+    settings = settings or RelocationSettings()
+    steps = chip.pixel_enu_steps(row, col)
+    row_m, col_m = (float(np.linalg.norm(v)) for v in steps)
+    br = max(1, int(round(settings.axis_cell_m / row_m)))
+    bc = max(1, int(round(settings.axis_cell_m / col_m)))
+    hr = int(math.ceil(settings.axis_radius_m / row_m)) + br
+    hc = int(math.ceil(settings.axis_radius_m / col_m)) + bc
+    r0, r1 = max(0, int(row) - hr), min(chip.shape[0], int(row) + hr + 1)
+    c0, c1 = max(0, int(col) - hc), min(chip.shape[1], int(col) + hc + 1)
+    nr, nc = (r1 - r0) // br, (c1 - c0) // bc
+    if nr < 3 or nc < 3:
+        return ConstraintAxis(np.array([1.0, 0.0]), 0.0)
+    power = np.abs(chip.data[r0 : r0 + nr * br, c0 : c0 + nc * bc]) ** 2
+    blocks = power.reshape(nr, br, nc, bc).mean(axis=(1, 3))
+    image = np.log10(blocks + 1e-12 * max(float(blocks.max()), 1e-30))
+    g_rows, g_cols = np.gradient(image)
+    # Block index -> ground EN metres, and gradients from index to ground.
+    jac = np.column_stack([steps[0] * br, steps[1] * bc])
+    grads = np.linalg.inv(jac).T @ np.vstack([g_rows.ravel(), g_cols.ravel()])
+    ii, jj = np.meshgrid(
+        ((np.arange(nr) + 0.5) * br - 0.5 + r0 - row) / br,
+        ((np.arange(nc) + 0.5) * bc - 0.5 + c0 - col) / bc,
+        indexing="ij",
+    )
+    dist = np.linalg.norm(jac @ np.vstack([ii.ravel(), jj.ravel()]), axis=0)
+    sigma = settings.axis_radius_m / 2.0
+    weights = np.exp(-0.5 * (dist / sigma) ** 2) * (dist <= settings.axis_radius_m)
+    tensor = (grads * weights) @ grads.T
+    vals, vecs = np.linalg.eigh(tensor)
+    total = float(vals.sum())
+    coherence = float((vals[1] - vals[0]) / total) if total > 0 else 0.0
+    axis = vecs[:, 0] / np.linalg.norm(vecs[:, 0])
+    return ConstraintAxis(axis, coherence)
+
+
+def relocate_from_axis(
+    geometry: ProductGeometry,
+    target: ImagedTarget,
+    point: NDArray[np.float64],
+    axis: ConstraintAxis,
+    target_class: TargetClass,
+    settings: RelocationSettings | None = None,
+    band: Band | None = None,
+    target_height: float | None = None,
+) -> Relocation:
+    """Single click plus an estimated axis: two-click relocation on spawned points.
+
+    Points ``axis_half_length_m`` either side of the click along ``axis`` stand in for
+    the two constraint clicks. The result is flagged ``heading_estimated`` (soft) and
+    carries ``axis_coherence``; ``constraint_lonlat`` holds the spawned points.
+    """
+    settings = settings or RelocationSettings()
+    c = np.asarray(point, np.float64)
+    lat, lon, _ = ecef_to_geodetic(c)
+    enu = enu_basis(lon, lat)
+    step = settings.axis_half_length_m * (
+        axis.direction_en[0] * enu[0] + axis.direction_en[1] * enu[1]
+    )
+    a, b = (
+        lonlat_to_ecef(*_lonlat(c + sign * step), target.height) for sign in (-1, 1)
+    )
+    result = relocate(
+        geometry,
+        target,
+        a,
+        b,
+        target_class,
+        settings,
+        band=band,
+        target_height=target_height,
+    )
+    result.mode = MODE_SINGLE_CLICK_AUTO
+    result.axis_coherence = axis.coherence
+    result.flags.append(FLAG_HEADING_ESTIMATED)
+    if result.indicator == INDICATOR_GREEN:
+        result.indicator = INDICATOR_AMBER
+    return result
