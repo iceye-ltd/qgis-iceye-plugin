@@ -285,6 +285,24 @@ with $\sigma_{centroid} = \sigma_{click} = 2$ m by default.
 
 Green: no flags. Amber: soft flags only. Red: any hard flag.
 
+### 6.7 Single-click mode (`relocate_single_click`)
+The user clicks once where the constraint crosses the band. The click C is
+RD-inverted to $(R_C, t_C)$ and must satisfy $|R_C - R_{img}| \le w_b \sin\theta_{inc}$;
+then $t_{true} = t_C$ and $\mathbf P_{true}$ = geocode$(R, t_{true}, h_{target})$ with the
+optional range residual as in 6.3. $v_r$, $v_{gr}$, $\Delta x$ and the epoch follow as
+in 6.4. One point does not give $\hat{\mathbf u}_{road}$, so:
+
+- only the minimum ground speed $v_{t,min} = |v_r| / \sin\theta_{inc}$ is known (exact
+  when the motion is along ground range); $v_t$, heading, $\phi$, $\psi$, track and
+  $v_{a,pred}$ are left empty;
+- $\sigma_{\Delta x}^2 = \sigma_{centroid}^2 + \sigma_{click}^2 + (w_c/\sqrt{12})^2$, without
+  the $1/\sin^2\psi$ term it cannot evaluate;
+- plausibility uses $v_{t,min}$ for the speed checks, skips the geometry check and
+  adds the soft flag `heading_unknown`, so the indicator is amber at best.
+
+Recovering direction from a single click would need automatic road / wake detection,
+which this tool deliberately does not do.
+
 ---
 
 ## 7. Map drift along the curve (optional $v_a$ check)

@@ -18,6 +18,7 @@ import pytest
 from iceye_toolbox.core.mover_relocation import (
     FLAG_BAND_CLIPPED,
     FLAG_CONSTRAINT_PARALLEL,
+    FLAG_HEADING_UNKNOWN,
     FLAG_IMPLAUSIBLE_SPEED,
     FLAG_OUTSIDE_BAND,
     FLAG_PROBABLY_STATIONARY,
@@ -25,6 +26,7 @@ from iceye_toolbox.core.mover_relocation import (
     INDICATOR_AMBER,
     INDICATOR_GREEN,
     INDICATOR_RED,
+    MODE_SINGLE_CLICK,
     TARGET_CLASSES,
     ConstraintError,
     ImagedTarget,
@@ -36,6 +38,7 @@ from iceye_toolbox.core.mover_relocation import (
     local_geometry,
     plausibility,
     relocate,
+    relocate_single_click,
 )
 from iceye_toolbox.core.target_finder import (
     ProductGeometry,
@@ -524,6 +527,76 @@ class TestIntersection:
 # ----------------------------------------------------------------------------------
 # E: plausibility
 # ----------------------------------------------------------------------------------
+
+
+class TestSingleClick:
+    """One click where the constraint crosses the band: position and v_r only."""
+
+    @pytest.mark.parametrize(
+        ("side", "heading"), [("left", 20.0), ("left", 200.0), ("right", 100.0)]
+    )
+    def test_click_on_crossing_recovers_position_and_v_r(
+        self, geometry, scene_point, side, heading
+    ):
+        """t_true, v_r and dx match the truth; speed is a lower bound, no heading."""
+        p0 = scene_point if side == "left" else _mirrored_point(geometry, scene_point)
+        speed = 10.0
+        mover = simulate_mover(geometry, p0, _ground_velocity(p0, speed, heading))
+        target = _imaged_target(geometry, mover)
+        result = relocate_single_click(
+            geometry,
+            target,
+            p0,
+            TARGET_CLASSES["car"],
+            RelocationSettings(range_residual=True),
+        )
+        assert result.mode == MODE_SINGLE_CLICK
+        assert result.t_true == pytest.approx(mover.t_true, abs=2e-5)
+        assert np.linalg.norm(result.p_true - p0) < 0.3
+        assert math.copysign(1.0, result.v_r) == math.copysign(1.0, mover.v_r)
+        assert result.v_r == pytest.approx(mover.v_r, rel=0.01)
+        local = local_geometry(geometry, mover.t_true, p0)
+        assert result.dx_m == pytest.approx(
+            local.v_ground * (mover.t_img - mover.t_true), rel=0.01
+        )
+        assert result.v_t is None and result.heading_deg is None
+        assert result.v_t_min == pytest.approx(abs(result.v_r) / local.sin_incidence)
+        assert result.v_t_min <= speed * 1.01
+        assert result.track_lonlat == []
+        assert result.flags == [FLAG_HEADING_UNKNOWN]
+        assert result.indicator == INDICATOR_AMBER
+        attributes = result.attributes()
+        assert attributes["mode"] == MODE_SINGLE_CLICK
+        assert attributes["v_t"] is None and attributes["v_t_min"] > 0
+
+    def test_minimum_speed_is_exact_along_ground_range(self, geometry, scene_point):
+        """A target driving straight at the radar has v_t_min equal to its speed."""
+        local = local_geometry(
+            geometry, geometry.orbit.zero_doppler(scene_point, 0.35)[0], scene_point
+        )
+        towards = -local.ground_range_dir
+        heading = math.degrees(math.atan2(towards[0], towards[1]))
+        mover = simulate_mover(
+            geometry, scene_point, _ground_velocity(scene_point, 8.0, heading)
+        )
+        target = _imaged_target(geometry, mover)
+        result = relocate_single_click(
+            geometry, target, scene_point, TARGET_CLASSES["car"]
+        )
+        assert result.v_r > 0
+        assert result.v_t_min == pytest.approx(8.0, rel=0.01)
+
+    def test_click_outside_band_is_rejected(self, geometry, scene_point):
+        """The click must lie inside the band."""
+        mover = simulate_mover(
+            geometry, scene_point, _ground_velocity(scene_point, 10.0, 100.0)
+        )
+        target = _imaged_target(geometry, mover)
+        off = geometry.orbit.geocode(
+            target.slant_range + 100.0, target.time, target.height, scene_point
+        )
+        with pytest.raises(ConstraintError, match="inside the band"):
+            relocate_single_click(geometry, target, off, TARGET_CLASSES["car"])
 
 
 class TestPlausibility:

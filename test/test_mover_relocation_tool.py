@@ -99,6 +99,7 @@ class TestMoverRelocationDialog:
             dialog.detect_check,
             dialog.residual_check,
             dialog.extrapolate_check,
+            dialog.single_check,
             dialog.start_button,
         ):
             assert len(control.toolTip()) > 20, control
@@ -231,6 +232,26 @@ class TestMoverRelocationDialog:
             assert canvas.mapTool() is dialog.map_tool
         finally:
             project.layersAdded.disconnect(knock_out_tool)
+
+    def test_single_click_relocation(self, qgis_iface, slc_layer):
+        """With the toggle on, target click + one constraint click finishes."""
+        dialog = self._dialog(qgis_iface)
+        dialog.single_check.setChecked(True)
+        assert dialog.start()
+        mover, imaged, on_road = _mover(dialog.scene)
+        dialog.handle_click(imaged)
+        assert "click once" in dialog._step_label.text()
+        dialog.handle_click(on_road(0.0))
+        assert dialog.step == STEP_DONE, dialog._result.text()
+        result = dialog.last_result
+        assert result.mode == "single_click"
+        assert result.v_t is None and result.heading_deg is None
+        assert math.copysign(1, result.v_r) == math.copysign(1, mover.v_r)
+        assert "heading unknown" in dialog._result.text()
+        feature = next(dialog.outputs.layer("true").getFeatures())
+        assert feature["mode"] == "single_click"
+        assert dialog.outputs.layer("track") is None
+        assert qgis_iface.mapCanvas().mapTool() is dialog.map_tool
 
     def test_constraint_must_straddle(self, qgis_iface, slc_layer):
         """Two clicks on one side are rejected and the constraint step restarts."""

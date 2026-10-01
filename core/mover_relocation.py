@@ -62,7 +62,14 @@ FLAG_PROBABLY_STATIONARY = "probably_stationary"
 FLAG_CONSTRAINT_PARALLEL = "constraint_parallel_to_track"
 FLAG_V_A_INCONSISTENT = "v_a_inconsistent"
 FLAG_BAND_CLIPPED = "band_clipped"
-SOFT_FLAGS = frozenset({FLAG_BAND_CLIPPED, FLAG_PROBABLY_STATIONARY})
+# Single-click mode: no road direction, so no ground speed or heading.
+FLAG_HEADING_UNKNOWN = "heading_unknown"
+SOFT_FLAGS = frozenset(
+    {FLAG_BAND_CLIPPED, FLAG_PROBABLY_STATIONARY, FLAG_HEADING_UNKNOWN}
+)
+
+MODE_TWO_CLICK = "two_click"
+MODE_SINGLE_CLICK = "single_click"
 
 INDICATOR_GREEN = "green"
 INDICATOR_AMBER = "amber"
@@ -502,7 +509,7 @@ def plausibility(
     dx_max_m: float,
     v_t: float,
     target_class: TargetClass,
-    constraint_track_angle_deg: float,
+    constraint_track_angle_deg: float | None,
     band_clipped: bool,
     settings: RelocationSettings,
     v_a_measured: tuple[float, float] | None = None,
@@ -511,6 +518,9 @@ def plausibility(
     """Failed checks and the traffic light: green, amber (soft flags only) or red.
 
     ``v_a_measured`` is ``(v_a, sigma)`` from map drift, used only with ``v_a_check``.
+    Without a constraint direction (``constraint_track_angle_deg`` None, single-click
+    mode) ``v_t`` is the minimum ground speed, the geometry check is skipped and
+    ``heading_unknown`` is raised.
     """
     flags = []
     if abs(dx_m) > dx_max_m:
@@ -519,7 +529,9 @@ def plausibility(
         flags.append(FLAG_IMPLAUSIBLE_SPEED)
     elif v_t < settings.v_min_mps:
         flags.append(FLAG_PROBABLY_STATIONARY)
-    if constraint_track_angle_deg <= settings.min_constraint_track_angle_deg:
+    if constraint_track_angle_deg is None:
+        flags.append(FLAG_HEADING_UNKNOWN)
+    elif constraint_track_angle_deg <= settings.min_constraint_track_angle_deg:
         flags.append(FLAG_CONSTRAINT_PARALLEL)
     if settings.v_a_check and v_a_measured is not None and v_a_predicted is not None:
         v_a, sigma = v_a_measured
@@ -537,7 +549,12 @@ def plausibility(
 
 @dataclass
 class Relocation:
-    """True position and motion of a relocated target; ``v_r > 0`` towards the radar."""
+    """True position and motion of a relocated target; ``v_r > 0`` towards the radar.
+
+    In single-click mode the constraint direction is unknown: ``v_t``, the heading,
+    the road angles, ``sigma_v_t`` and ``v_a_predicted`` are None, and only the
+    minimum ground speed ``v_t_min = |v_r| / sin(theta_inc)`` is known.
+    """
 
     target: ImagedTarget
     target_class: TargetClass
@@ -548,19 +565,21 @@ class Relocation:
     v_r: float
     v_gr: float
     dx_m: float
-    v_t: float
-    heading_deg: float
-    phi_deg: float
-    constraint_track_angle_deg: float
+    v_t: float | None
+    v_t_min: float
+    heading_deg: float | None
+    phi_deg: float | None
+    constraint_track_angle_deg: float | None
     constraint_width_m: float
     sigma_dx_m: float
     sigma_v_r: float
-    sigma_v_t: float
-    v_a_predicted: float
+    sigma_v_t: float | None
+    v_a_predicted: float | None
     flags: list[str]
     indicator: str
-    constraint_lonlat: tuple[tuple[float, float], tuple[float, float]]
+    constraint_lonlat: list[tuple[float, float]]
     track_lonlat: list[tuple[float, float]]
+    mode: str = MODE_TWO_CLICK
     sign_validated: bool = SIGN_VALIDATED
 
     @property
@@ -570,12 +589,15 @@ class Relocation:
 
     def attributes(self) -> dict[str, Any]:
         """Flat attribute dict for the ``true_position`` layer."""
+        v_t = self.v_t
         return {
+            "mode": self.mode,
             "v_r": self.v_r,
             "v_gr": self.v_gr,
-            "v_t": self.v_t,
-            "v_t_kmh": self.v_t * MPS_TO_KMH,
-            "v_t_kn": self.v_t * MPS_TO_KNOTS,
+            "v_t": v_t,
+            "v_t_kmh": None if v_t is None else v_t * MPS_TO_KMH,
+            "v_t_kn": None if v_t is None else v_t * MPS_TO_KNOTS,
+            "v_t_min": self.v_t_min,
             "heading_deg": self.heading_deg,
             "phi_deg": self.phi_deg,
             "dx_m": self.dx_m,
@@ -687,6 +709,7 @@ def relocate(
         v_gr=v_r / local.sin_incidence,
         dx_m=dx,
         v_t=v_t,
+        v_t_min=abs(v_r) / local.sin_incidence,
         heading_deg=_heading_deg(u_dir),
         phi_deg=phi_deg,
         constraint_track_angle_deg=track_angle,
@@ -697,6 +720,99 @@ def relocate(
         v_a_predicted=v_a_pred,
         flags=flags,
         indicator=indicator,
-        constraint_lonlat=(_lonlat(a), _lonlat(b)),
+        constraint_lonlat=[_lonlat(a), _lonlat(b)],
         track_lonlat=track,
+    )
+
+
+def relocate_single_click(
+    geometry: ProductGeometry,
+    target: ImagedTarget,
+    point: NDArray[np.float64],
+    target_class: TargetClass,
+    settings: RelocationSettings | None = None,
+    band: Band | None = None,
+    target_height: float | None = None,
+) -> Relocation:
+    """Relocate from one click where the road / rail / deck / wake crosses the band.
+
+    The click is snapped onto the band's centre line at its own zero-Doppler time,
+    so the true position, ``dx``, ``v_r`` and the epoch are as in two-click mode.
+    Without the constraint direction only the minimum ground speed
+    ``|v_r| / sin(theta_inc)`` is known (exact when the road runs along ground
+    range); heading, track and the geometry check are unavailable and the result is
+    flagged ``heading_unknown``. The along-track uncertainty drops the
+    ``1 / sin(psi)`` road-angle term, which it cannot evaluate.
+
+    Raises
+    ------
+    ConstraintError
+        If the click is not inside the band.
+    """
+    settings = settings or RelocationSettings()
+    band = band or band_for_target(geometry, target, target_class, settings)
+    h_target = target.height if target_height is None else target_height
+    c = np.asarray(point, np.float64)
+    t_true, r_c = geometry.orbit.zero_doppler(c, target.time)
+    if abs(r_c - target.slant_range) > band.half_width_slant_m:
+        raise ConstraintError(
+            "Click inside the band, where the road / wake crosses it."
+        )
+    r_true = target.slant_range
+    if settings.range_residual:
+        # True slant range is longer by R v_r^2 / (2 V_eff^2); v_r follows from t.
+        kin = local_geometry(geometry, t_true, c)
+        v_r = kin.v_eff2 * (target.time - t_true) / target.slant_range
+        r_true += target.slant_range * v_r**2 / (2.0 * kin.v_eff2)
+    p_true = geometry.orbit.geocode(r_true, t_true, h_target, c)
+
+    local = local_geometry(geometry, t_true, p_true)
+    dt = target.time - t_true
+    v_r = local.v_eff2 * dt / target.slant_range
+    dx = local.v_ground * dt
+    v_t_min = abs(v_r) / local.sin_incidence
+
+    width = settings.constraint_width_m
+    sigma_dx = math.sqrt(
+        settings.sigma_centroid_m**2
+        + settings.sigma_click_m**2
+        + (width / math.sqrt(12.0)) ** 2
+    )
+    sigma_v_r = local.v_eff2 * sigma_dx / (local.v_ground * target.slant_range)
+    flags, indicator = plausibility(
+        dx_m=dx,
+        dx_max_m=band.dx_max_m,
+        v_t=v_t_min,
+        target_class=target_class,
+        constraint_track_angle_deg=None,
+        band_clipped=band.clipped,
+        settings=settings,
+    )
+
+    epoch = geometry.reference_time + timedelta(seconds=t_true)
+    return Relocation(
+        target=target,
+        target_class=target_class,
+        t_true=t_true,
+        t_true_utc=epoch.isoformat().replace("+00:00", "Z"),
+        p_true=p_true,
+        dt_s=dt,
+        v_r=v_r,
+        v_gr=v_r / local.sin_incidence,
+        dx_m=dx,
+        v_t=None,
+        v_t_min=v_t_min,
+        heading_deg=None,
+        phi_deg=None,
+        constraint_track_angle_deg=None,
+        constraint_width_m=width,
+        sigma_dx_m=sigma_dx,
+        sigma_v_r=sigma_v_r,
+        sigma_v_t=None,
+        v_a_predicted=None,
+        flags=flags,
+        indicator=indicator,
+        constraint_lonlat=[_lonlat(c)],
+        track_lonlat=[],
+        mode=MODE_SINGLE_CLICK,
     )

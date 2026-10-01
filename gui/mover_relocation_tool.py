@@ -73,6 +73,7 @@ from ..core.mover_relocation import (
     image_time_limits,
     locate_imaged_target,
     relocate,
+    relocate_single_click,
 )
 from ..core.target_finder import (
     ProductGeometry,
@@ -404,24 +405,42 @@ def format_relocation(result: Relocation) -> str:
         _tr("True position {lon:.6f}, {lat:.6f} at {utc}").format(
             lon=lon, lat=lat, utc=result.t_true_utc
         ),
-        _tr(
-            "v_t {v:.1f} &plusmn; {s:.1f} m/s ({kmh:.0f} km/h, {kn:.1f} kn), "
-            "heading {hdg:.0f} deg"
-        ).format(
-            v=result.v_t,
-            s=result.sigma_v_t,
-            kmh=result.v_t * MPS_TO_KMH,
-            kn=result.v_t * MPS_TO_KNOTS,
-            hdg=result.heading_deg,
-        ),
+        _speed_line(result),
         _tr(
             "v_r {vr:+.2f} &plusmn; {s:.2f} m/s (towards radar +), v_gr {vgr:+.2f} m/s"
         ).format(vr=result.v_r, s=result.sigma_v_r, vgr=result.v_gr),
-        _tr("dx {dx:+.0f} &plusmn; {s:.0f} m, road angle to track {a:.0f} deg").format(
-            dx=result.dx_m, s=result.sigma_dx_m, a=result.constraint_track_angle_deg
+        _tr("dx {dx:+.0f} &plusmn; {s:.0f} m").format(
+            dx=result.dx_m, s=result.sigma_dx_m
+        )
+        + (
+            ""
+            if result.constraint_track_angle_deg is None
+            else _tr(", road angle to track {a:.0f} deg").format(
+                a=result.constraint_track_angle_deg
+            )
         ),
     ]
     return "<br>".join(lines)
+
+
+def _speed_line(result: Relocation) -> str:
+    """Ground speed and heading, or the minimum speed in single-click mode."""
+    if result.v_t is None:
+        v = result.v_t_min
+        return _tr(
+            "v_t &ge; {v:.1f} m/s ({kmh:.0f} km/h, {kn:.1f} kn), heading unknown "
+            "(single click)"
+        ).format(v=v, kmh=v * MPS_TO_KMH, kn=v * MPS_TO_KNOTS)
+    return _tr(
+        "v_t {v:.1f} &plusmn; {s:.1f} m/s ({kmh:.0f} km/h, {kn:.1f} kn), "
+        "heading {hdg:.0f} deg"
+    ).format(
+        v=result.v_t,
+        s=result.sigma_v_t,
+        kmh=result.v_t * MPS_TO_KMH,
+        kn=result.v_t * MPS_TO_KNOTS,
+        hdg=result.heading_deg,
+    )
 
 
 # ----------------------------------------------------------------------------------
@@ -541,6 +560,21 @@ class MoverRelocationDialog(QDialog):
             )
         )
 
+        self.single_check = QCheckBox(
+            _tr("Single click on the constraint (fast; no heading)")
+        )
+        self.single_check.setToolTip(
+            _tr(
+                "On: after the target, click once where the road / rail / bridge "
+                "deck / wake crosses the yellow band. Gives the true position, "
+                "displacement and radial velocity, but only a minimum ground speed "
+                "and no heading, because one point does not show the road's "
+                "direction. Off: click two points along the constraint for full "
+                "speed and heading."
+            )
+        )
+        self.single_check.toggled.connect(self._on_mode_toggled)
+
         form = QFormLayout()
         form.addRow(_tr("Target class"), self.class_combo)
         form.addRow(_tr("Band margin"), self.margin_spin)
@@ -548,6 +582,7 @@ class MoverRelocationDialog(QDialog):
         form.addRow(self.detect_check)
         form.addRow(self.residual_check)
         form.addRow(self.extrapolate_check)
+        form.addRow(self.single_check)
         legend = QLabel(
             _tr(
                 "<span style='color:#b8a000'>&#9632;</span> band of possible true "
@@ -630,11 +665,21 @@ class MoverRelocationDialog(QDialog):
         prompts = {
             STEP_IDLE: _tr("Select an ICEYE SLC layer, then Pick target."),
             STEP_TARGET: _tr("Step 1: click the imaged (displaced) target."),
-            STEP_CONSTRAINT: _tr(
-                "Step 2: click two points on the road / rail / bridge deck / wake, "
-                "one on each side of the band ({n}/2). On bridges click the deck's "
-                "bright line, not its reflection on the water."
-            ).format(n=len(self.clicks)),
+            STEP_CONSTRAINT: (
+                _tr(
+                    "Step 2: click once where the road / rail / bridge deck / wake "
+                    "crosses the band."
+                )
+                if self.single_check.isChecked()
+                else _tr(
+                    "Step 2: click two points on the road / rail / bridge deck / "
+                    "wake, one on each side of the band ({n}/2)."
+                ).format(n=len(self.clicks))
+            )
+            + _tr(
+                " On bridges click the deck's bright line, not its reflection on "
+                "the water."
+            ),
             STEP_DONE: _tr("Done. Click another target, or Reset."),
         }
         self._step_label.setText(prompts[step])
@@ -732,8 +777,19 @@ class MoverRelocationDialog(QDialog):
             self.clicks.append(QgsPointXY(point))
             self._draw_clicks()
             self._set_step(STEP_CONSTRAINT)
-            if len(self.clicks) == 2:
+            if len(self.clicks) >= self._clicks_needed():
                 self._finish()
+
+    def _clicks_needed(self) -> int:
+        return 1 if self.single_check.isChecked() else 2
+
+    def _on_mode_toggled(self, _checked: bool) -> None:
+        """Restart the constraint step when switching between one and two clicks."""
+        if self.step == STEP_CONSTRAINT:
+            self.clicks = []
+            self._points_rb.reset(Qgis.GeometryType.Point)
+            self._constraint_rb.reset(Qgis.GeometryType.Line)
+            self._set_step(STEP_CONSTRAINT)
 
     def handle_move(self, point: QgsPointXY) -> None:
         """Live ``|v_r|`` readout while the cursor is inside the band."""
@@ -798,21 +854,32 @@ class MoverRelocationDialog(QDialog):
 
     def _finish(self) -> None:
         scene, target = self.scene, self.target
-        a, b = (scene.ecef(p.x(), p.y()) for p in self.clicks)
+        points = [scene.ecef(p.x(), p.y()) for p in self.clicks]
         target_class = self.target_class()
         # Ships sit on the sea surface; other targets stay on the display surface.
         height = scene.geometry.scene_height if target_class.name == "ship" else None
         try:
-            result = relocate(
-                scene.geometry,
-                target,
-                a,
-                b,
-                target_class,
-                self.settings(),
-                band=self.band,
-                target_height=height,
-            )
+            if len(points) == 1:
+                result = relocate_single_click(
+                    scene.geometry,
+                    target,
+                    points[0],
+                    target_class,
+                    self.settings(),
+                    band=self.band,
+                    target_height=height,
+                )
+            else:
+                result = relocate(
+                    scene.geometry,
+                    target,
+                    points[0],
+                    points[1],
+                    target_class,
+                    self.settings(),
+                    band=self.band,
+                    target_height=height,
+                )
         except ConstraintError as e:
             self.clicks = []
             self._points_rb.reset(Qgis.GeometryType.Point)
