@@ -6,7 +6,7 @@ import math
 
 import numpy as np
 import pytest
-from qgis.core import QgsPointXY, QgsProject
+from qgis.core import Qgis, QgsMarkerLineSymbolLayer, QgsPointXY, QgsProject
 
 from iceye_toolbox.core.metadata import MetadataProvider
 from iceye_toolbox.core.mover_relocation import FLAG_BAND_CLIPPED, INDICATOR_AMBER
@@ -148,7 +148,23 @@ class TestMoverRelocationDialog:
         assert feature["indicator"] == INDICATOR_AMBER
         assert feature["v_t"] == pytest.approx(result.v_t)
         assert dialog.outputs.layer("displacement").featureCount() == 1
-        assert dialog.outputs.layer("track").featureCount() == 1
+        track = dialog.outputs.layer("track")
+        assert track.featureCount() == 1
+        # The track ends in an arrowhead and runs along the heading, so the arrow
+        # points the way the target moves.
+        arrows = [
+            sl
+            for sl in track.renderer().symbol().symbolLayers()
+            if isinstance(sl, QgsMarkerLineSymbolLayer)
+        ]
+        assert len(arrows) == 1
+        assert arrows[0].placements() == Qgis.MarkerLinePlacement.LastVertex
+        line = next(track.getFeatures()).geometry().asPolyline()
+        lat0 = math.radians(line[0].y())
+        east = (line[-1].x() - line[0].x()) * math.cos(lat0)
+        north = line[-1].y() - line[0].y()
+        bearing = math.degrees(math.atan2(east, north)) % 360.0
+        assert abs((bearing - result.heading_deg + 180.0) % 360.0 - 180.0) < 1.0
 
         true_ecef = lonlat_to_ecef(*result.true_lonlat, dialog.scene.display_height)
         assert np.linalg.norm(true_ecef - mover.p_true) < 0.5

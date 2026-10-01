@@ -27,6 +27,7 @@ from qgis.core import (
     QgsFillSymbol,
     QgsGeometry,
     QgsLineSymbol,
+    QgsMarkerLineSymbolLayer,
     QgsMarkerSymbol,
     QgsMessageLog,
     QgsPalLayerSettings,
@@ -277,6 +278,23 @@ def _haloed_line(
     return [casing, line]
 
 
+def _arrowhead(color: tuple[int, int, int]) -> QgsMarkerLineSymbolLayer:
+    """Return a filled arrowhead on a line's last vertex, pointing along the line."""
+    head = QgsMarkerSymbol.createSimple(
+        {
+            "name": "filled_arrowhead",
+            "color": _rgb(color),
+            "size": "7",
+            "outline_color": _rgb(HALO),
+            "outline_width": "0.5",
+        }
+    )
+    arrow = QgsMarkerLineSymbolLayer(True)
+    arrow.setPlacements(Qgis.MarkerLinePlacement.LastVertex)
+    arrow.setSubSymbol(head)
+    return arrow
+
+
 def _style(layer: QgsVectorLayer, key: str) -> None:
     """Default symbology of each output layer, made to stand out on grayscale SAR."""
     if key == "band":
@@ -293,6 +311,10 @@ def _style(layer: QgsVectorLayer, key: str) -> None:
         symbol.deleteSymbolLayer(0)
         for symbol_layer in _haloed_line(COLORS[key], 0.8, dashed=key == "track"):
             symbol.appendSymbolLayer(symbol_layer)
+        if key == "track":
+            # The track runs from collection start to end: an arrowhead on its
+            # last vertex shows the direction of travel.
+            symbol.appendSymbolLayer(_arrowhead(COLORS[key]))
     else:
         shapes = {
             "ticks": ("circle", "3"),
