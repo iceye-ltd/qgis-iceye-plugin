@@ -260,7 +260,8 @@ $\mathbf P(t) = \mathbf P_{true} + v_t\,\hat{\mathbf u}_{dir}(t - t_{true})$.
 
 ### 6.5 Uncertainty
 With $\psi$ the angle between the constraint and the track and $w_c$ the constraint
-width (road, rail, bridge 10 m; wake 20 m):
+width (`constraint_width_m`, 10 m; the panel has no constraint-type choice, since the
+type changed nothing but this number):
 
 $$
 \sigma_{\Delta x}^2 = \sigma_{centroid}^2 + \sigma_{click}^2

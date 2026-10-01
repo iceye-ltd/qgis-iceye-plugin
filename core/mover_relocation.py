@@ -29,7 +29,7 @@ from __future__ import annotations
 
 import math
 from collections.abc import Sequence
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from datetime import timedelta
 from typing import Any
 
@@ -55,13 +55,6 @@ MPS_TO_KNOTS = 3600.0 / 1852.0
 # The band / intersection chain and its signs are validated in simulation by
 # test_mover_relocation.TestSignValidation; see the module docstring.
 SIGN_VALIDATED = True
-
-CUE_NONE = "none"
-CUE_ROAD = "road"
-CUE_RAIL = "rail"
-CUE_BRIDGE = "bridge"
-CUE_WAKE = "wake"
-CUES = (CUE_ROAD, CUE_RAIL, CUE_BRIDGE, CUE_WAKE)
 
 FLAG_OUTSIDE_BAND = "outside_band"
 FLAG_IMPLAUSIBLE_SPEED = "implausible_speed"
@@ -102,14 +95,8 @@ class RelocationSettings:
     min_constraint_track_angle_deg: float = 15.0
     sigma_centroid_m: float = 2.0
     sigma_click_m: float = 2.0
-    constraint_width_m: dict[str, float] = field(
-        default_factory=lambda: {
-            CUE_ROAD: 10.0,
-            CUE_RAIL: 10.0,
-            CUE_BRIDGE: 10.0,
-            CUE_WAKE: 20.0,
-        }
-    )
+    # Width of the road / rail / deck / wake the clicks follow, for sigma_dx.
+    constraint_width_m: float = 10.0
     # True slant range is R_img + R v_r^2 / (2 V_eff^2): below 1 m at car speeds.
     range_residual: bool = False
     allow_extrapolation: bool = False
@@ -554,7 +541,6 @@ class Relocation:
 
     target: ImagedTarget
     target_class: TargetClass
-    cue: str
     t_true: float
     t_true_utc: str
     p_true: NDArray[np.float64]
@@ -597,7 +583,6 @@ class Relocation:
             "sigma_v_r": self.sigma_v_r,
             "t_true_utc": self.t_true_utc,
             "target_class": self.target_class.name,
-            "cue": self.cue,
             "flags": ",".join(self.flags),
             "indicator": self.indicator,
             "sign_validated": self.sign_validated,
@@ -610,7 +595,6 @@ def relocate(
     point_a: NDArray[np.float64],
     point_b: NDArray[np.float64],
     target_class: TargetClass,
-    cue: str,
     settings: RelocationSettings | None = None,
     band: Band | None = None,
     target_height: float | None = None,
@@ -662,7 +646,7 @@ def relocate(
     u_dir = u_road if towards * v_r >= 0 else -u_road
     v_a_pred = v_t * float(u_dir @ local.along_track_dir)
 
-    width = settings.constraint_width_m.get(cue, settings.constraint_width_m[CUE_ROAD])
+    width = settings.constraint_width_m
     sin_track = max(math.sin(math.radians(track_angle)), 1e-9)
     sigma_dx = math.sqrt(
         settings.sigma_centroid_m**2
@@ -695,7 +679,6 @@ def relocate(
     return Relocation(
         target=target,
         target_class=target_class,
-        cue=cue,
         t_true=t_true,
         t_true_utc=epoch.isoformat().replace("+00:00", "Z"),
         p_true=p_true,

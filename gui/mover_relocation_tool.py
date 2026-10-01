@@ -60,8 +60,6 @@ from qgis.PyQt.QtWidgets import (
 
 from ..core.metadata import MetadataProvider
 from ..core.mover_relocation import (
-    CUE_NONE,
-    CUES,
     MPS_TO_KMH,
     MPS_TO_KNOTS,
     TARGET_CLASSES,
@@ -493,18 +491,6 @@ class MoverRelocationDialog(QDialog):
                 "placed on the sea surface; cars and trains on the image surface."
             )
         )
-        self.cue_combo = QComboBox()
-        for cue in CUES:
-            self.cue_combo.addItem(cue, cue)
-        self.cue_combo.setToolTip(
-            _tr(
-                "What the two constraint clicks follow: the road, rail line, bridge "
-                "deck or wake the target travels along. It sets the assumed width "
-                "of that feature in the uncertainty (10 m; wake 20 m). For bridges, "
-                "click the deck's direct bright line, not its reflection on the "
-                "water."
-            )
-        )
         self.margin_spin = QDoubleSpinBox()
         self.margin_spin.setRange(0.0, 500.0)
         self.margin_spin.setSuffix(" m")
@@ -557,7 +543,6 @@ class MoverRelocationDialog(QDialog):
 
         form = QFormLayout()
         form.addRow(_tr("Target class"), self.class_combo)
-        form.addRow(_tr("Constraint"), self.cue_combo)
         form.addRow(_tr("Band margin"), self.margin_spin)
         form.addRow(_tr("Tick step |v_r|"), self.tick_spin)
         form.addRow(self.detect_check)
@@ -647,7 +632,8 @@ class MoverRelocationDialog(QDialog):
             STEP_TARGET: _tr("Step 1: click the imaged (displaced) target."),
             STEP_CONSTRAINT: _tr(
                 "Step 2: click two points on the road / rail / bridge deck / wake, "
-                "one on each side of the band ({n}/2)."
+                "one on each side of the band ({n}/2). On bridges click the deck's "
+                "bright line, not its reflection on the water."
             ).format(n=len(self.clicks)),
             STEP_DONE: _tr("Done. Click another target, or Reset."),
         }
@@ -823,7 +809,6 @@ class MoverRelocationDialog(QDialog):
                 a,
                 b,
                 target_class,
-                self.cue_combo.currentData(),
                 self.settings(),
                 band=self.band,
                 target_height=height,
@@ -855,7 +840,7 @@ class MoverRelocationDialog(QDialog):
 
     def _write_band(self, band: Band) -> None:
         target = band.target
-        common = {"target_class": band.target_class.name, "cue": CUE_NONE}
+        common = {"target_class": band.target_class.name}
         self.outputs.add(
             "band",
             QgsGeometry.fromPolygonXY([_points(band.polygon_lonlat)]),

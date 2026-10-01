@@ -16,9 +16,6 @@ import numpy as np
 import pytest
 
 from iceye_toolbox.core.mover_relocation import (
-    CUE_BRIDGE,
-    CUE_ROAD,
-    CUE_WAKE,
     FLAG_BAND_CLIPPED,
     FLAG_CONSTRAINT_PARALLEL,
     FLAG_IMPLAUSIBLE_SPEED,
@@ -222,9 +219,7 @@ class TestSignValidation:
         a, b = _road(mover, geometry.scene_height)
 
         settings = RelocationSettings(range_residual=True)
-        result = relocate(
-            geometry, target, a, b, TARGET_CLASSES["car"], CUE_ROAD, settings
-        )
+        result = relocate(geometry, target, a, b, TARGET_CLASSES["car"], settings)
 
         # Physics check independent of the tool: an approaching target (v_r > 0) is
         # imaged LATER in zero-Doppler time than its true position.
@@ -251,7 +246,6 @@ class TestSignValidation:
         )
         assert result.v_t == pytest.approx(speed, rel=0.015)
         assert _angle_diff(result.heading_deg, _expected_heading(p0, velocity)) < 0.5
-        assert result.cue == CUE_ROAD
         assert result.sign_validated
 
     def test_look_sides_differ(self, geometry, scene_point):
@@ -271,8 +265,8 @@ class TestSignValidation:
         target = _imaged_target(geometry, mover)
         a, b = _road(mover, geometry.scene_height)
         car = TARGET_CLASSES["car"]
-        ab = relocate(geometry, target, a, b, car, CUE_ROAD)
-        ba = relocate(geometry, target, b, a, car, CUE_ROAD)
+        ab = relocate(geometry, target, a, b, car)
+        ba = relocate(geometry, target, b, a, car)
         assert np.linalg.norm(ab.p_true - ba.p_true) < 1e-3
         assert ab.v_r == pytest.approx(ba.v_r)
         assert _angle_diff(ab.heading_deg, ba.heading_deg) < 1e-6
@@ -283,7 +277,7 @@ class TestSignValidation:
         mover = simulate_mover(geometry, scene_point, velocity)
         target = _imaged_target(geometry, mover)
         a, b = _road(mover, geometry.scene_height)
-        plain = relocate(geometry, target, a, b, TARGET_CLASSES["car"], CUE_ROAD)
+        plain = relocate(geometry, target, a, b, TARGET_CLASSES["car"])
         assert not RelocationSettings().range_residual
         assert 0.05 < np.linalg.norm(plain.p_true - scene_point) < 1.0
 
@@ -454,7 +448,7 @@ class TestIntersection:
         mover = simulate_mover(geometry, scene_point, velocity)
         target = _imaged_target(geometry, mover)
         a, b = _road(mover, geometry.scene_height, half_length=400.0)
-        result = relocate(geometry, target, a, b, TARGET_CLASSES["car"], CUE_ROAD)
+        result = relocate(geometry, target, a, b, TARGET_CLASSES["car"])
         assert FLAG_CONSTRAINT_PARALLEL in result.flags
         assert result.indicator == INDICATOR_RED
         assert result.constraint_track_angle_deg == pytest.approx(8.0, abs=0.5)
@@ -464,9 +458,7 @@ class TestIntersection:
         mover, target = self._case(geometry, scene_point, heading=100.0)
         a, b = _road(mover, geometry.scene_height)
         settings = RelocationSettings(sigma_centroid_m=2.0, sigma_click_m=3.0)
-        result = relocate(
-            geometry, target, a, b, TARGET_CLASSES["car"], CUE_ROAD, settings
-        )
+        result = relocate(geometry, target, a, b, TARGET_CLASSES["car"], settings)
         sin_psi = math.sin(math.radians(result.constraint_track_angle_deg))
         expected = math.sqrt(4.0 + 9.0 + (10.0 / math.sqrt(12.0)) ** 2 / sin_psi**2)
         assert result.sigma_dx_m == pytest.approx(expected)
@@ -474,15 +466,23 @@ class TestIntersection:
         assert result.sigma_v_r == pytest.approx(
             local.v_eff2 * expected / (local.v_ground * local.slant_range)
         )
-        wake = relocate(geometry, target, a, b, TARGET_CLASSES["ship"], CUE_WAKE)
-        assert wake.constraint_width_m == 20.0
-        assert wake.sigma_dx_m > result.sigma_dx_m
+        assert result.constraint_width_m == 10.0
+        wide = relocate(
+            geometry,
+            target,
+            a,
+            b,
+            TARGET_CLASSES["car"],
+            RelocationSettings(constraint_width_m=20.0),
+        )
+        assert wide.constraint_width_m == 20.0
+        assert wide.sigma_dx_m > result.sigma_dx_m
 
     def test_epoch_and_track(self, geometry, scene_point):
         """t_true is reported in UTC; the track spans the acquisition window."""
         mover, target = self._case(geometry, scene_point)
         a, b = _road(mover, geometry.scene_height)
-        result = relocate(geometry, target, a, b, TARGET_CLASSES["car"], CUE_BRIDGE)
+        result = relocate(geometry, target, a, b, TARGET_CLASSES["car"])
         assert result.t_true_utc.startswith("2025-11-09T14:15:")
         assert geometry.acquisition_window is not None
         assert len(result.track_lonlat) == 2
@@ -498,7 +498,7 @@ class TestIntersection:
         mover, target = self._case(geometry, scene_point)
         a, b = _road(mover, geometry.scene_height)
         attributes = relocate(
-            geometry, target, a, b, TARGET_CLASSES["car"], CUE_ROAD
+            geometry, target, a, b, TARGET_CLASSES["car"]
         ).attributes()
         for name in (
             "v_r",
@@ -512,7 +512,6 @@ class TestIntersection:
             "sigma_dx_m",
             "t_true_utc",
             "target_class",
-            "cue",
             "flags",
             "indicator",
             "sign_validated",
@@ -536,7 +535,7 @@ class TestPlausibility:
         mover = simulate_mover(geometry, scene_point, velocity)
         target = _imaged_target(geometry, mover)
         a, b = _road(mover, geometry.scene_height)
-        result = relocate(geometry, target, a, b, TARGET_CLASSES["car"], CUE_ROAD)
+        result = relocate(geometry, target, a, b, TARGET_CLASSES["car"])
         assert result.flags == []
         assert result.indicator == INDICATOR_GREEN
 

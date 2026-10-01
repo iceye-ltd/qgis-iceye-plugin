@@ -94,7 +94,6 @@ class TestMoverRelocationDialog:
         dialog = self._dialog(qgis_iface)
         for control in (
             dialog.class_combo,
-            dialog.cue_combo,
             dialog.margin_spin,
             dialog.tick_spin,
             dialog.detect_check,
@@ -144,7 +143,6 @@ class TestMoverRelocationDialog:
         true_layer = dialog.outputs.layer("true")
         feature = next(true_layer.getFeatures())
         assert feature["target_class"] == "car"
-        assert feature["cue"] == "road"
         assert feature["indicator"] == INDICATOR_AMBER
         assert feature["v_t"] == pytest.approx(result.v_t)
         assert dialog.outputs.layer("displacement").featureCount() == 1
