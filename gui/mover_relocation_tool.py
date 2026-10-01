@@ -34,6 +34,9 @@ from qgis.core import (
     QgsProject,
     QgsRasterLayer,
     QgsRectangle,
+    QgsSimpleLineSymbolLayer,
+    QgsTextBufferSettings,
+    QgsTextFormat,
     QgsVectorLayer,
     QgsVectorLayerSimpleLabeling,
 )
@@ -97,6 +100,19 @@ LAYERS = {
 }
 
 _INDICATOR_COLORS = {"green": "#27ae60", "amber": "#e67e22", "red": "#c0392b"}
+
+# Canvas colours: saturated hues that read on dark sea and bright clutter alike,
+# each drawn with a black HALO casing.
+COLORS = {
+    "band": (255, 221, 0),  # yellow
+    "ticks": (255, 221, 0),
+    "imaged": (255, 0, 204),  # magenta
+    "displacement": (255, 0, 204),
+    "true": (57, 255, 20),  # lime
+    "track": (57, 255, 20),
+    "constraint": (0, 229, 255),  # cyan
+}
+HALO = (0, 0, 0)
 
 STEP_IDLE = "idle"
 STEP_TARGET = "target"
@@ -246,39 +262,67 @@ def _field_type(value: Any) -> QMetaType.Type:
     return QMetaType.Type.QString
 
 
+def _rgb(color: tuple[int, int, int], alpha: int = 255) -> str:
+    return ",".join(str(c) for c in (*color, alpha))
+
+
+def _haloed_line(
+    color: tuple[int, int, int], width: float, dashed: bool = False
+) -> list[QgsSimpleLineSymbolLayer]:
+    """Return a black casing under a coloured line, visible on any pixel."""
+    casing = QgsSimpleLineSymbolLayer(QColor(*HALO), width + 0.6)
+    line = QgsSimpleLineSymbolLayer(QColor(*color), width)
+    if dashed:
+        line.setPenStyle(Qt.PenStyle.DashLine)
+    return [casing, line]
+
+
 def _style(layer: QgsVectorLayer, key: str) -> None:
-    """Default symbology of each output layer."""
+    """Default symbology of each output layer, made to stand out on grayscale SAR."""
     if key == "band":
         symbol = QgsFillSymbol.createSimple(
             {
-                "color": "230,126,34,50",
-                "outline_color": "230,126,34,220",
-                "outline_width": "0.4",
+                "color": _rgb(COLORS["band"], 45),
+                "outline_style": "no",
             }
         )
+        for symbol_layer in _haloed_line(COLORS["band"], 0.6):
+            symbol.appendSymbolLayer(symbol_layer)
     elif key in ("displacement", "track"):
-        symbol = QgsLineSymbol.createSimple(
-            {
-                "color": "44,62,80,220" if key == "displacement" else "39,174,96,200",
-                "width": "0.6",
-                "line_style": "dash" if key == "track" else "solid",
-            }
-        )
+        symbol = QgsLineSymbol.createSimple({"color": _rgb(HALO), "width": "1.4"})
+        symbol.deleteSymbolLayer(0)
+        for symbol_layer in _haloed_line(COLORS[key], 0.8, dashed=key == "track"):
+            symbol.appendSymbolLayer(symbol_layer)
     else:
-        colors = {"ticks": "230,126,34", "imaged": "149,165,166", "true": "39,174,96"}
+        shapes = {
+            "ticks": ("circle", "3"),
+            "imaged": ("circle", "5"),
+            "true": ("star", "7"),
+        }
+        name, size = shapes[key]
         symbol = QgsMarkerSymbol.createSimple(
             {
-                "name": "circle",
-                "color": colors[key],
-                "size": "1.6" if key == "ticks" else "3",
-                "outline_color": "255,255,255",
+                "name": name,
+                "color": _rgb(COLORS[key]),
+                "size": size,
+                "outline_color": _rgb(HALO),
+                "outline_width": "0.5",
             }
         )
     layer.renderer().setSymbol(symbol)
     if key == "ticks":
+        text = QgsTextFormat()
+        text.setColor(QColor(255, 255, 255))
+        text.setSize(9)
+        buffer = QgsTextBufferSettings()
+        buffer.setEnabled(True)
+        buffer.setSize(1.0)
+        buffer.setColor(QColor(*HALO))
+        text.setBuffer(buffer)
         labels = QgsPalLayerSettings()
         labels.fieldName = "label"
         labels.enabled = True
+        labels.setFormat(text)
         layer.setLabeling(QgsVectorLayerSimpleLabeling(labels))
         layer.setLabelsEnabled(True)
 
@@ -395,16 +439,21 @@ class MoverRelocationDialog(QDialog):
         self.map_tool.clicked.connect(self.handle_click)
         self.map_tool.moved.connect(self.handle_move)
         self.map_tool.cancelled.connect(self.reset)
+        # Saturated colours with a black casing stay visible on grayscale SAR.
         self._band_rb = QgsRubberBand(canvas, Qgis.GeometryType.Polygon)
-        self._band_rb.setColor(QColor(230, 126, 34, 200))
-        self._band_rb.setFillColor(QColor(230, 126, 34, 40))
-        self._band_rb.setWidth(1)
+        self._band_rb.setColor(QColor(*COLORS["band"]))
+        self._band_rb.setFillColor(QColor(*COLORS["band"], 50))
+        self._band_rb.setSecondaryStrokeColor(QColor(*HALO))
+        self._band_rb.setWidth(2)
         self._constraint_rb = QgsRubberBand(canvas, Qgis.GeometryType.Line)
-        self._constraint_rb.setColor(QColor(31, 119, 180, 220))
-        self._constraint_rb.setWidth(2)
+        self._constraint_rb.setColor(QColor(*COLORS["constraint"]))
+        self._constraint_rb.setSecondaryStrokeColor(QColor(*HALO))
+        self._constraint_rb.setWidth(3)
         self._points_rb = QgsRubberBand(canvas, Qgis.GeometryType.Point)
-        self._points_rb.setColor(QColor(31, 119, 180, 220))
-        self._points_rb.setIconSize(8)
+        self._points_rb.setColor(QColor(*COLORS["constraint"]))
+        self._points_rb.setSecondaryStrokeColor(QColor(*HALO))
+        self._points_rb.setIconSize(12)
+        self._points_rb.setWidth(3)
 
         self.class_combo = QComboBox()
         for name, target_class in TARGET_CLASSES.items():
@@ -414,25 +463,74 @@ class MoverRelocationDialog(QDialog):
                 ),
                 name,
             )
+        self.class_combo.setToolTip(
+            _tr(
+                "Type of moving target. Its maximum speed sets how long the band is "
+                "(the band covers every position a target this fast could truly be "
+                "at) and the speed limit of the plausibility check. Ships are "
+                "placed on the sea surface; cars and trains on the image surface."
+            )
+        )
         self.cue_combo = QComboBox()
         for cue in CUES:
             self.cue_combo.addItem(cue, cue)
+        self.cue_combo.setToolTip(
+            _tr(
+                "What the two constraint clicks follow: the road, rail line, bridge "
+                "deck or wake the target travels along. It sets the assumed width "
+                "of that feature in the uncertainty (10 m; wake 20 m). For bridges, "
+                "click the deck's direct bright line, not its reflection on the "
+                "water."
+            )
+        )
         self.margin_spin = QDoubleSpinBox()
         self.margin_spin.setRange(0.0, 500.0)
         self.margin_spin.setSuffix(" m")
         self.margin_spin.setValue(RelocationSettings.band_margin_m)
         self.margin_spin.setToolTip(
-            _tr("Band half-width beyond the target half-extent")
+            _tr(
+                "Extra half-width of the band beyond half the target's size, in "
+                "ground metres. Wider makes the band easier to see and lets the "
+                "cursor readout work slightly off the exact range line."
+            )
         )
         self.tick_spin = QDoubleSpinBox()
         self.tick_spin.setRange(0.5, 50.0)
         self.tick_spin.setSuffix(" m/s")
         self.tick_spin.setValue(RelocationSettings.tick_step_mps)
+        self.tick_spin.setToolTip(
+            _tr(
+                "Spacing of the speed ticks along the band, in radial velocity "
+                "|v_r| (towards / away from the radar). Each tick also shows the "
+                "minimum ground speed that radial velocity implies."
+            )
+        )
         self.detect_check = QCheckBox(_tr("Snap the click to the target hull"))
         self.detect_check.setChecked(True)
+        self.detect_check.setToolTip(
+            _tr(
+                "On: the target click searches about 15 m around itself for the "
+                "bright target and uses its intensity-weighted centre. Off: the "
+                "clicked point itself is the imaged position."
+            )
+        )
         self.residual_check = QCheckBox(_tr("Apply range residual (fast movers)"))
+        self.residual_check.setToolTip(
+            _tr(
+                "A mover's true slant range is slightly longer than its imaged one "
+                "(about 6 mm at 1 m/s, 0.9 m at 12.5 m/s). Turn on for fast "
+                "targets; negligible for ships and slow traffic."
+            )
+        )
         self.extrapolate_check = QCheckBox(
             _tr("Allow constraint points on one side of the band")
+        )
+        self.extrapolate_check.setToolTip(
+            _tr(
+                "Normally the two constraint clicks must lie on opposite sides of "
+                "the band. Turn on to extend the line through both clicks to the "
+                "band instead (less accurate)."
+            )
         )
 
         form = QFormLayout()
@@ -443,12 +541,30 @@ class MoverRelocationDialog(QDialog):
         form.addRow(self.detect_check)
         form.addRow(self.residual_check)
         form.addRow(self.extrapolate_check)
+        legend = QLabel(
+            _tr(
+                "<span style='color:#b8a000'>&#9632;</span> band of possible true "
+                "positions &nbsp; <span style='color:#ff00cc'>&#9679;</span> imaged "
+                "&nbsp; <span style='color:#2fbf10'>&#9733;</span> true &nbsp; "
+                "<span style='color:#00b8cc'>&#9679;</span> constraint clicks. "
+                "Hover over a setting for what it does."
+            )
+        )
+        legend.setWordWrap(True)
+        legend.setTextFormat(Qt.TextFormat.RichText)
+        form.addRow(legend)
 
         self.start_button = QPushButton(_tr("Pick target"))
         self.start_button.setToolTip(_tr("Click the imaged target on the map"))
         self.start_button.setDefault(True)
         self.start_button.clicked.connect(self.start)
         reset_btn = QPushButton(_tr("Reset"))
+        reset_btn.setToolTip(
+            _tr(
+                "Clear the current target, band and clicks (Esc or right-click on "
+                "the map does the same). Output layers are kept."
+            )
+        )
         reset_btn.clicked.connect(self.reset)
         close_btn = QPushButton(_tr("Close"))
         close_btn.clicked.connect(self.close)

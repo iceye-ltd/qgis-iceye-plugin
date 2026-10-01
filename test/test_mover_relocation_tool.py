@@ -89,6 +89,21 @@ class TestMoverRelocationDialog:
         dialog.detect_check.setChecked(False)
         return dialog
 
+    def test_every_setting_is_explained(self, qgis_iface):
+        """Each control in the panel carries a tooltip saying what it does."""
+        dialog = self._dialog(qgis_iface)
+        for control in (
+            dialog.class_combo,
+            dialog.cue_combo,
+            dialog.margin_spin,
+            dialog.tick_spin,
+            dialog.detect_check,
+            dialog.residual_check,
+            dialog.extrapolate_check,
+            dialog.start_button,
+        ):
+            assert len(control.toolTip()) > 20, control
+
     def test_start_requires_slc_layer(self, qgis_iface, monkeypatch):
         """Without an SLC layer the tool explains what to select."""
         monkeypatch.setattr(qgis_iface, "activeLayer", lambda: None)
