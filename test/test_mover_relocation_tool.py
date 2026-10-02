@@ -6,7 +6,13 @@ import math
 
 import numpy as np
 import pytest
-from qgis.core import Qgis, QgsMarkerLineSymbolLayer, QgsPointXY, QgsProject
+from qgis.core import (
+    Qgis,
+    QgsMarkerLineSymbolLayer,
+    QgsPointXY,
+    QgsProject,
+    QgsRectangle,
+)
 
 from iceye_toolbox.core.metadata import MetadataProvider
 from iceye_toolbox.core.mover_relocation import (
@@ -15,7 +21,6 @@ from iceye_toolbox.core.mover_relocation import (
     ConstraintAxis,
 )
 from iceye_toolbox.core.target_finder import ecef_to_geodetic, lonlat_to_ecef
-from iceye_toolbox.gui.curve_editor import CurveEditorDialog
 from iceye_toolbox.gui.mover_relocation_tool import (
     STEP_CONSTRAINT,
     STEP_DONE,
@@ -24,10 +29,21 @@ from iceye_toolbox.gui.mover_relocation_tool import (
     target_from_click,
 )
 
-from .test_curve_editor import _zoom_to_centre
 from .test_mover_relocation import _ground_velocity, simulate_mover
 
 CENTRE_COL, CENTRE_ROW = 4271.5, 434.5
+
+
+def _zoom_to_centre(qgis_iface, layer, half_deg: float = 0.0005) -> None:
+    canvas = qgis_iface.mapCanvas()
+    canvas.setDestinationCrs(layer.crs())
+    c = layer.extent().center()
+    canvas.setExtent(
+        QgsRectangle(
+            c.x() - half_deg, c.y() - half_deg, c.x() + half_deg, c.y() + half_deg
+        )
+    )
+    canvas.refresh()
 
 
 @pytest.fixture
@@ -142,6 +158,11 @@ class TestMoverRelocationDialog:
         assert result.v_t == pytest.approx(10.0, rel=0.02)
         assert math.copysign(1, result.v_r) == math.copysign(1, mover.v_r)
         assert result.flags == [FLAG_BAND_CLIPPED]
+        # The band and its ticks are removed once the true position is placed.
+        assert dialog.outputs.layer("band") is None
+        assert dialog.outputs.layer("ticks") is None
+        assert dialog._band_rb.numberOfVertices() == 0
+        assert dialog.outputs.layer("imaged").featureCount() == 1
         assert result.indicator == INDICATOR_AMBER
         assert "AMBER" in dialog._result.text()
 
@@ -204,7 +225,8 @@ class TestMoverRelocationDialog:
             dialog.handle_click(on_road(60.0))
             assert dialog.step == STEP_DONE, dialog._result.text()
             assert qgis_iface.activeLayer() is slc_layer
-            assert dialog.outputs.layer("band").featureCount() == 2
+            # The relocated target's band is removed; the abandoned first one stays.
+            assert dialog.outputs.layer("band").featureCount() == 1
         finally:
             project.layersAdded.disconnect(activate_added)
 
@@ -327,15 +349,3 @@ class TestMoverRelocationDialog:
         assert "straddle" in dialog._result.text()
         assert dialog.clicks == []
         assert dialog.outputs.layer("true") is None
-
-    def test_curve_editor_hands_over_target(self, qgis_iface, slc_layer):
-        """Use as target in the Curve Editor feeds the relocation panel."""
-        editor = CurveEditorDialog(qgis_iface, metadata_provider=MetadataProvider())
-        assert editor.load_from_canvas(), editor._status.text()
-        dialog = self._dialog(qgis_iface)
-        editor.target_located.connect(dialog.set_target)
-        editor._on_search_clicked()
-        assert editor.last_target is not None, editor._status.text()
-        assert dialog.target is editor.last_target
-        assert dialog.step == STEP_CONSTRAINT
-        assert dialog.outputs.layer("band").featureCount() == 1

@@ -41,7 +41,6 @@ from .core.video import VideoTool
 from .gui.batch_tool import BatchToolbarAction
 from .gui.canvas_rotation_tool import MandalaToolbarAction
 from .gui.crop_toolbar import CropToolbarAction
-from .gui.curve_editor import CurveEditorDialog
 from .gui.lens_tool import LensToolbarAction
 from .gui.measuring_tool import MeasuringToolbarAction
 from .gui.metadata_widget import MetadataWidget
@@ -114,8 +113,6 @@ class IceyeToolbox:
         self.stac_catalog_widget = StacCatalogWidget(parent=self.iface.mainWindow())
         self.stac_catalog_action = None
         self.export_layer_action = None
-        # Built on first use; it reads the active SLC layer only when asked to.
-        self.curve_editor_dialog: CurveEditorDialog | None = None
         self.mover_relocation_dialog: MoverRelocationDialog | None = None
         self.mandala_toolbar_action = MandalaToolbarAction(
             self.iface,
@@ -282,15 +279,6 @@ class IceyeToolbox:
         )
 
         self.add_action(
-            icon_path=":/plugins/iceye_toolbox/curve-editor.svg",
-            text=self.tr("Curve Editor"),
-            callback=self.open_curve_editor,
-            parent=self.iface.mainWindow(),
-            status_tip="Fit a curve to a moving target in an SLC and use it as the "
-            "Mover Relocation target",
-        )
-
-        self.add_action(
             icon_path=":/plugins/iceye_toolbox/mover-relocation.svg",
             text=self.tr("Mover Relocation"),
             callback=self.open_mover_relocation,
@@ -335,11 +323,6 @@ class IceyeToolbox:
             self.iface.removeDockWidget(self.stac_catalog_widget)
             self.stac_catalog_widget.deleteLater()
             self.stac_catalog_widget = None
-
-        if self.curve_editor_dialog is not None:
-            self.curve_editor_dialog.close()
-            self.curve_editor_dialog.deleteLater()
-            self.curve_editor_dialog = None
 
         if self.mover_relocation_dialog is not None:
             self.mover_relocation_dialog.close()
@@ -419,21 +402,6 @@ class IceyeToolbox:
         else:
             self.stac_catalog_widget.hide()
 
-    def open_curve_editor(self) -> None:
-        """Show the curve editor window, creating it on first use."""
-        if self.curve_editor_dialog is None:
-            self.curve_editor_dialog = CurveEditorDialog(
-                self.iface,
-                metadata_provider=self.metadata_provider,
-                parent=self.iface.mainWindow(),
-            )
-            self.curve_editor_dialog.target_located.connect(
-                self._on_curve_target_located
-            )
-        self.curve_editor_dialog.show()
-        self.curve_editor_dialog.raise_()
-        self.curve_editor_dialog.activateWindow()
-
     def open_mover_relocation(self) -> MoverRelocationDialog:
         """Show the Mover Relocation panel, creating it on first use."""
         if self.mover_relocation_dialog is None:
@@ -445,10 +413,6 @@ class IceyeToolbox:
         self.mover_relocation_dialog.show()
         self.mover_relocation_dialog.raise_()
         return self.mover_relocation_dialog
-
-    def _on_curve_target_located(self, target, layer) -> None:
-        """Hand a target found in the Curve Editor to the Mover Relocation tool."""
-        self.open_mover_relocation().set_target(target, layer)
 
     def _on_stac_visibility_changed(self, visible: bool) -> None:
         if not self.stac_catalog_action:

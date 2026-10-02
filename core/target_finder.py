@@ -805,7 +805,7 @@ def find_targets_along_curve(
     Parameters
     ----------
     chip : SlcChip
-        SLC window the curve editor shows.
+        SLC window around the target.
     control_points : sequence
         The curve's four Bezier control points in order (start, c1, c2, end), as
         0..1 fractions of the chip (x along columns, y along rows).

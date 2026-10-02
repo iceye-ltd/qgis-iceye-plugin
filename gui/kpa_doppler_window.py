@@ -153,15 +153,13 @@ class KpaDopplerWindow(QDialog):
         *,
         a1: float,
         a2: float,
-        dx: float = 0.0,
         velocity: float | None = None,
     ) -> None:
         """Refresh the after-KPA 2D Doppler spectrum display."""
         self._coeff_label.setText(
-            _tr(
-                "KPA coefficients: linear={a1:.3f}, quadratic={a2:.3f}, "
-                "azimuth shift={dx:.1f}"
-            ).format(a1=a1, a2=a2, dx=dx)
+            _tr("KPA coefficients: linear={a1:.3f}, quadratic={a2:.3f}").format(
+                a1=a1, a2=a2
+            )
         )
         if velocity is None:
             self._velocity_label.setText(

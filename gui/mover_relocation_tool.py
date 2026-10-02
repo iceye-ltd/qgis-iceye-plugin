@@ -1,6 +1,6 @@
 """Mover Relocation: two-click relocation of moving targets in Spotlight / Dwell SLCs.
 
-1. Click the imaged target (or hand one over from the Curve Editor). The
+1. Click the imaged target (snapped to its hull). The
    possible-location band is drawn along the target's range line with ``|v_r|`` ticks,
    and the cursor readout shows the radial velocity a band position implies.
 2. Click two points on the road / rail / bridge deck / wake axis, one on each side of
@@ -58,6 +58,7 @@ from qgis.PyQt.QtWidgets import (
     QWidget,
 )
 
+from ..core.cropper import get_extend_image_coords
 from ..core.metadata import MetadataProvider
 from ..core.mover_relocation import (
     MODE_SINGLE_CLICK_AUTO,
@@ -81,15 +82,19 @@ from ..core.mover_relocation import (
 from ..core.target_finder import (
     ProductGeometry,
     RelocationParameters,
+    SlcChip,
     gcp_lonlat_to_pixel,
     gcp_mean_height,
     gcp_pixel_to_lonlat,
     lonlat_to_ecef,
+    patch_to_file_layout,
     read_iceye_properties,
 )
-from .curve_editor import read_slc_chip
+from .lens_tool import read_slc_data
 
 WGS84 = "EPSG:4326"
+# Largest SLC chip read around a click (complex samples).
+MAX_CHIP_PIXELS = 20_000_000
 _METRES_PER_DEG = 111_320.0
 
 # Output layers: key -> (geometry type, layer name).
@@ -197,6 +202,49 @@ def target_from_click(
         min(max(row / max(rows - 1, 1), 0.0), 1.0),
     )
     return locate_imaged_target(chip, [fraction] * 4, h, params)
+
+
+def read_slc_chip(
+    layer: QgsRasterLayer,
+    extent: QgsRectangle,
+    metadata_provider: MetadataProvider,
+) -> SlcChip:
+    """Complex SLC chip of ``layer`` under ``extent`` (layer CRS), in file layout.
+
+    Raises
+    ------
+    ValueError
+        With a user-facing message when the layer or extent cannot be read.
+    """
+    if not isinstance(layer, QgsRasterLayer) or layer.bandCount() < 2:
+        raise ValueError(_tr("Select an ICEYE SLC layer first."))
+    metadata = metadata_provider.get(layer)
+    if metadata is None:
+        raise ValueError(_tr("The active layer has no ICEYE metadata."))
+    bounds = get_extend_image_coords(layer, extent)
+    if bounds is None:
+        raise ValueError(_tr("Could not map the click to SLC pixels."))
+    if (
+        bounds.xMinimum() < 0
+        or bounds.yMinimum() < 0
+        or bounds.xMaximum() > layer.width()
+        or bounds.yMaximum() > layer.height()
+    ):
+        raise ValueError(_tr("The click is too close to the edge of the SLC."))
+    if bounds.width() * bounds.height() > MAX_CHIP_PIXELS:
+        raise ValueError(_tr("The area around the click is too large to read."))
+    slc = read_slc_data(layer, extent, metadata_provider)
+    if slc is None:
+        raise ValueError(_tr("Failed to read the SLC samples."))
+    source = layer.dataProvider().dataSourceUri()
+    left = (metadata.sar_observation_direction or "").lower() == "left"
+    return SlcChip(
+        data=patch_to_file_layout(slc.data_patch, left),
+        col0=int(bounds.xMinimum()),
+        row0=int(bounds.yMinimum()),
+        geometry=ProductGeometry.from_properties(read_iceye_properties(source)),
+        pixel_to_lonlat=gcp_pixel_to_lonlat(source),
+    )
 
 
 def chip_around(
@@ -380,8 +428,13 @@ class OutputLayers:
         layer = QgsProject.instance().mapLayer(self.ids.get(key, ""))
         return layer if isinstance(layer, QgsVectorLayer) and layer.isValid() else None
 
-    def add(self, key: str, geometry: QgsGeometry, attributes: dict[str, Any]) -> None:
-        """Append one feature, creating the layer with fields from ``attributes``."""
+    def add(
+        self, key: str, geometry: QgsGeometry, attributes: dict[str, Any]
+    ) -> int | None:
+        """Append one feature, creating the layer with fields from ``attributes``.
+
+        Returns the new feature id (None if the provider rejected it).
+        """
         layer = self.layer(key)
         if layer is None:
             kind, name = LAYERS[key]
@@ -401,9 +454,23 @@ class OutputLayers:
             if layer.fields().indexOf(name) >= 0:
                 feature.setAttribute(name, value)
         feature.setGeometry(geometry)
-        layer.dataProvider().addFeature(feature)
+        ok, added = layer.dataProvider().addFeatures([feature])
         layer.updateExtents()
         layer.triggerRepaint()
+        return added[0].id() if ok and added else None
+
+    def remove(self, key: str, feature_ids: list[int]) -> None:
+        """Delete features from an output layer; drop the layer once it is empty."""
+        layer = self.layer(key)
+        if layer is None or not feature_ids:
+            return
+        layer.dataProvider().deleteFeatures(feature_ids)
+        layer.updateExtents()
+        if layer.featureCount() == 0:
+            QgsProject.instance().removeMapLayer(layer.id())
+            self.ids.pop(key, None)
+        else:
+            layer.triggerRepaint()
 
 
 def _points(lonlats) -> list[QgsPointXY]:
@@ -483,6 +550,8 @@ class MoverRelocationDialog(QDialog):
         self.last_result: Relocation | None = None
         self.step = STEP_IDLE
         self.outputs = OutputLayers(iface)
+        # Band / tick feature ids of the current target, removed once relocated.
+        self._band_features: dict[str, list[int]] = {}
 
         self.setWindowTitle(_tr("Mover Relocation"))
         self.setMinimumWidth(420)
@@ -731,7 +800,7 @@ class MoverRelocationDialog(QDialog):
             except Exception as e:
                 self._step_label.setText(_tr("Cannot read the SLC: {e}").format(e=e))
                 return False
-        # Keep the SLC active so the tool, the Curve Editor and the toolbar
+        # Keep the SLC active so the tool and the toolbar
         # policy all keep seeing the image layer.
         if self.iface.activeLayer() is not layer:
             self.iface.setActiveLayer(layer)
@@ -760,7 +829,7 @@ class MoverRelocationDialog(QDialog):
     def set_target(
         self, target: ImagedTarget, layer: QgsRasterLayer | None = None
     ) -> bool:
-        """Use ``target`` (e.g. from the Curve Editor) and wait for the constraint."""
+        """Use an already located ``target`` and wait for the constraint."""
         if not self._ensure_scene(layer or self.iface.activeLayer()):
             return False
         self.reset()
@@ -920,6 +989,7 @@ class MoverRelocationDialog(QDialog):
         if result.mode == MODE_SINGLE_CLICK_AUTO:
             self._show_spawned_points(result)
         self._write_result(result)
+        self._clear_band()
         self._activate_tool()
         self._set_step(STEP_DONE)
 
@@ -976,10 +1046,17 @@ class MoverRelocationDialog(QDialog):
     # Output layers
     # ------------------------------------------------------------------
 
+    def _clear_band(self) -> None:
+        """Remove the relocated target's band and ticks to unclutter the image."""
+        for key, fids in self._band_features.items():
+            self.outputs.remove(key, fids)
+        self._band_features = {}
+        self._band_rb.reset(Qgis.GeometryType.Polygon)
+
     def _write_band(self, band: Band) -> None:
         target = band.target
         common = {"target_class": band.target_class.name}
-        self.outputs.add(
+        band_fid = self.outputs.add(
             "band",
             QgsGeometry.fromPolygonXY([_points(band.polygon_lonlat)]),
             {
@@ -991,8 +1068,9 @@ class MoverRelocationDialog(QDialog):
                 "clipped": band.clipped,
             },
         )
+        tick_fids = []
         for tick in band.ticks:
-            self.outputs.add(
+            fid = self.outputs.add(
                 "ticks",
                 QgsGeometry.fromPointXY(QgsPointXY(*tick.lonlat)),
                 {
@@ -1002,6 +1080,12 @@ class MoverRelocationDialog(QDialog):
                     "label": tick.label,
                 },
             )
+            if fid is not None:
+                tick_fids.append(fid)
+        self._band_features = {
+            "band": [] if band_fid is None else [band_fid],
+            "ticks": tick_fids,
+        }
         self.outputs.add(
             "imaged",
             QgsGeometry.fromPointXY(QgsPointXY(*target.lonlat)),

@@ -6,8 +6,8 @@ line (constant slant range, varying zero-Doppler time). In Spotlight / Dwell the
 target's echoes carry no usable radial velocity, so the position along that line comes
 from a constraint the user reads off the image:
 
-1. **Target.** The imaged position ``(R_img, t_img)`` (click or curve, see
-   ``locate_imaged_target``). ``band_for_target`` draws the possible-location band,
+1. **Target.** The imaged position ``(R_img, t_img)`` (a click snapped to the target
+   hull, see ``locate_imaged_target``). ``band_for_target`` draws the possible-location band,
    ``R = R_img`` for ``|t - t_img| <= dt_max``, with ``|v_r|`` ticks.
 2. **Constraint.** Two clicks on a road / rail / bridge deck / wake axis on opposite
    sides of the band. ``relocate`` intersects that segment with the band and derives
@@ -238,12 +238,12 @@ def locate_imaged_target(
     height: float,
     params: RelocationParameters | None = None,
 ) -> ImagedTarget:
-    """Intensity-weighted hull centroid around a curve (or a click) in an SLC chip.
+    """Intensity-weighted hull centroid around a click in an SLC chip.
 
-    ``control_points`` are the curve editor's four Bezier points as 0..1 chip
-    fractions; for a single click pass the click fraction four times, which makes the
-    corridor a disc of ``corridor_half_width_m``. Hull and ring thresholds are those
-    of ``core.target_finder.hull_and_clutter_masks``.
+    ``control_points`` are four Bezier points as 0..1 chip fractions; for a click
+    pass the click fraction four times, which makes the corridor a disc of
+    ``corridor_half_width_m``. Hull and ring thresholds are those of
+    ``core.target_finder.hull_and_clutter_masks``.
     """
     params = params or RelocationParameters()
     rows, cols = curve_pixels(control_points, chip.shape)

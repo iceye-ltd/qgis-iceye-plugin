@@ -142,7 +142,7 @@ with $t_{true} = t_0$ the zero-Doppler time of the true position.
 ## 4. Target input: imaged position
 
 ### 4.1 Bezier
-The curve editor's four control points $\mathbf p_0, \mathbf c_1, \mathbf c_2, \mathbf p_3$
+Four Bezier control points $\mathbf p_0, \mathbf c_1, \mathbf c_2, \mathbf p_3$
 are 0..1 fractions of the chip (x along columns, y along rows), sampled at 256 points
 and mapped to pixels as $r = y(N_r-1)$, $c = x(N_c-1)$. A single click is the
 degenerate curve with all four points at the click, so its corridor is a disc.

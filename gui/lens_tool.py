@@ -237,7 +237,7 @@ class KPAControlsPanel(QFrame):
         layout = QVBoxLayout(self)
         layout.setContentsMargins(8, 10, 8, 10)
         layout.setSpacing(8)
-        self.setMinimumHeight(106)
+        self.setMinimumHeight(78)
 
         linear_row = QHBoxLayout()
         linear_row.addWidget(QLabel(_tr("L")))
@@ -256,17 +256,6 @@ class KPAControlsPanel(QFrame):
         self.quadratic_slider.setToolTip(_tr("KPA quadratic phase coefficient (a2)"))
         quadratic_row.addWidget(self.quadratic_slider)
         layout.addLayout(quadratic_row)
-
-        azimuth_row = QHBoxLayout()
-        azimuth_row.addWidget(QLabel(_tr("Ax")))
-        self.azimuth_slider = QSlider(Qt.Orientation.Horizontal)
-        self.azimuth_slider.setRange(-1000, 1000)
-        self.azimuth_slider.setValue(0)
-        self.azimuth_slider.setToolTip(
-            _tr("KPA pure azimuth shift, exp(j*2*pi*fa*deltax) (deltax, samples)")
-        )
-        azimuth_row.addWidget(self.azimuth_slider)
-        layout.addLayout(azimuth_row)
 
 
 @dataclass
@@ -490,29 +479,25 @@ def _kpa_doppler_spectrum(data: NDArray[np.complex64]) -> NDArray[np.floating[An
 
 
 def _apply_kpa_phase_compensation(
-    data_patch: NDArray[np.complex64],
-    *,
-    a1: float = 0.0,
-    a2: float = 0.0,
-    dx: float = 0.0,
+    data_patch: NDArray[np.complex64], *, a1: float = 0.0, a2: float = 0.0
 ) -> NDArray[np.complex64]:
-    """Apply KPA keystone phase correction plus a pure azimuth shift, in the frequency domain."""
+    """Apply KPA keystone phase correction in the frequency domain."""
     ba, br = data_patch.shape
     fa = np.arange(-ba / 2.0, ba / 2.0, 1.0) / ba
     fr = np.arange(-br / 2.0, br / 2.0, 1.0) / br
     fr_grid, fa_grid = np.meshgrid(fr, fa)
     delta_az = a2 * fa_grid**2 + a1 * fa_grid
-    phase = np.exp(1j * 2.0 * np.pi * (fr_grid * delta_az + fa_grid * dx))
+    phase = np.exp(1j * 2.0 * np.pi * fr_grid * delta_az)
     phase = np.fft.fftshift(phase)
     spectrum2d = np.fft.fft2(data_patch)
     return np.fft.ifft2(spectrum2d * phase)
 
 
 def compute_kpa_after_doppler_spectrum(
-    data_patch: NDArray[np.complex64], *, a1: float, a2: float, dx: float = 0.0
+    data_patch: NDArray[np.complex64], *, a1: float, a2: float
 ) -> NDArray[np.floating[Any]]:
     """Return 2D log-magnitude Doppler spectrum after KPA compensation."""
-    compensated = _apply_kpa_phase_compensation(data_patch, a1=a1, a2=a2, dx=dx)
+    compensated = _apply_kpa_phase_compensation(data_patch, a1=a1, a2=a2)
     return _kpa_doppler_spectrum(compensated)
 
 
@@ -593,14 +578,10 @@ def _kpa_ground_velocity(a1: float, a2: float, metadata: Any) -> float | None:
 
 
 def _process_kpa(
-    data_patch: NDArray[np.complex64],
-    metadata: Any,
-    a1: float = 0.0,
-    a2: float = 0.0,
-    dx: float = 0.0,
+    data_patch: NDArray[np.complex64], metadata: Any, a1: float = 0.0, a2: float = 0.0
 ) -> NDArray[np.uint8]:
     """Apply look extraction + keystone phase algorithm and return display-ready image."""
-    compensated_data = _apply_kpa_phase_compensation(data_patch, a1=a1, a2=a2, dx=dx)
+    compensated_data = _apply_kpa_phase_compensation(data_patch, a1=a1, a2=a2)
 
     look = _extract_kpa_centered_look(compensated_data)
     patch, _ = select_pulse_with_strong_target(look, axis=0)
@@ -620,14 +601,14 @@ def _process_kpa(
 class KpaProcessWorker(QObject):
     """Run KPA image processing off the UI thread."""
 
-    requested = pyqtSignal(int, object, object, float, float, float)
+    requested = pyqtSignal(int, object, object, float, float)
     finished = pyqtSignal(int, object)
 
     def __init__(self) -> None:
         super().__init__()
         self.requested.connect(self._run)
 
-    @pyqtSlot(int, object, object, float, float, float)
+    @pyqtSlot(int, object, object, float, float)
     def _run(
         self,
         request_id: int,
@@ -635,10 +616,9 @@ class KpaProcessWorker(QObject):
         metadata: Any,
         a1: float,
         a2: float,
-        dx: float,
     ) -> None:
         try:
-            result = _process_kpa(data_patch, metadata, a1=a1, a2=a2, dx=dx)
+            result = _process_kpa(data_patch, metadata, a1=a1, a2=a2)
         except Exception as exc:
             QgsMessageLog.logMessage(
                 f"KPA processing failed: {exc}",
@@ -1154,9 +1134,6 @@ class LensMapTool(QgsMapToolPan):
         self._kpa_controls.quadratic_slider.valueChanged.connect(
             self._on_kpa_quadratic_changed
         )
-        self._kpa_controls.azimuth_slider.valueChanged.connect(
-            self._on_kpa_azimuth_changed
-        )
         self._overlay_pos = QPoint(0, 0)
         self._kpa_doppler_window: KpaDopplerWindow | None = None
         self._kpa_slc_cache: LensSLCData | None = None
@@ -1177,13 +1154,12 @@ class LensMapTool(QgsMapToolPan):
     def _kpa_ui_visible(self) -> bool:
         return self._render_mode == "kpa" and self._overlay is not None
 
-    def _kpa_coefficients(self) -> tuple[float, float, float]:
-        """Return current KPA phase coefficients (a1, a2, dx) from slider positions."""
+    def _kpa_coefficients(self) -> tuple[float, float]:
+        """Return current KPA phase coefficients (a1, a2) from slider positions."""
         divisor = self._kpa_slider_divisor
         return (
             self._kpa_controls.linear_slider.value() / divisor,
             self._kpa_controls.quadratic_slider.value() / divisor,
-            float(self._kpa_controls.azimuth_slider.value()),
         )
 
     def _resolve_raster_layer(self) -> QgsRasterLayer | None:
@@ -1223,11 +1199,6 @@ class LensMapTool(QgsMapToolPan):
             self._schedule_kpa_doppler_update()
 
     def _on_kpa_quadratic_changed(self, _value: int) -> None:
-        if self._render_mode == "kpa":
-            self._schedule_render()
-            self._schedule_kpa_doppler_update()
-
-    def _on_kpa_azimuth_changed(self, _value: int) -> None:
         if self._render_mode == "kpa":
             self._schedule_render()
             self._schedule_kpa_doppler_update()
@@ -1299,19 +1270,17 @@ class LensMapTool(QgsMapToolPan):
         if slc is None or slc.data_patch.size == 0:
             return
 
-        a1, a2, dx = self._kpa_coefficients()
+        a1, a2 = self._kpa_coefficients()
         log_doppler = compute_kpa_after_doppler_spectrum(
             slc.data_patch,
             a1=a1,
             a2=a2,
-            dx=dx,
         )
         velocity = _kpa_ground_velocity(a1, a2, slc.metadata)
         self._kpa_doppler_window.update_spectrum(
             log_doppler,
             a1=a1,
             a2=a2,
-            dx=dx,
             velocity=velocity,
         )
 
@@ -1592,7 +1561,7 @@ class LensMapTool(QgsMapToolPan):
         if slc is None or slc.data_patch.size == 0 or slc.geo_corners is None:
             return
 
-        a1, a2, dx = self._kpa_coefficients()
+        a1, a2 = self._kpa_coefficients()
         self._kpa_render_request_id += 1
         request_id = self._kpa_render_request_id
         self._kpa_pending_slc = slc
@@ -1607,7 +1576,6 @@ class LensMapTool(QgsMapToolPan):
             slc.metadata,
             a1,
             a2,
-            dx,
         )
 
     def _on_kpa_process_finished(self, request_id: int, result: object) -> None:
