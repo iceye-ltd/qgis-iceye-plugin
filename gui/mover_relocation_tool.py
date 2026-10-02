@@ -576,35 +576,22 @@ class MoverRelocationDialog(QDialog):
         )
 
         self.single_check = QCheckBox(
-            _tr("Single click on the constraint (fast; no heading)")
+            _tr("Single click on the constraint (rough heading from the image)")
         )
         self.single_check.setToolTip(
             _tr(
                 "On: after the target, click once where the road / rail / bridge "
-                "deck / wake crosses the yellow band. Gives the true position, "
-                "displacement and radial velocity, but only a minimum ground speed "
-                "and no heading, because one point does not show the road's "
-                "direction. Off: click two points along the constraint for full "
-                "speed and heading."
+                "deck / wake crosses the yellow band. The true position, "
+                "displacement and radial velocity are as with two clicks. The road "
+                "direction is estimated from the image about 50 m around the click "
+                "(dominant linear feature); two cyan points are placed along it to "
+                "give a rough speed and heading (about +-4 deg on clean features), "
+                "so check that they follow the road. Where the area is not clearly "
+                "linear only a minimum ground speed is given and the heading stays "
+                "unknown. Off: click two points along the constraint."
             )
         )
         self.single_check.toggled.connect(self._on_mode_toggled)
-        self.axis_check = QCheckBox(
-            _tr("Estimate the road direction from the image (rough heading)")
-        )
-        self.axis_check.setChecked(True)
-        self.axis_check.setEnabled(False)
-        self.axis_check.setToolTip(
-            _tr(
-                "With single click on: look about 50 m around the click for the "
-                "dominant linear feature (road edge, rail, deck or wake), place two "
-                "cyan points along it and compute speed and heading as with two "
-                "clicks. A rough estimate (about +-4 deg on clean features); check "
-                "the cyan points. Falls back to minimum speed only when the area "
-                "is not clearly linear."
-            )
-        )
-        self.single_check.toggled.connect(self.axis_check.setEnabled)
 
         form = QFormLayout()
         form.addRow(_tr("Target class"), self.class_combo)
@@ -614,7 +601,6 @@ class MoverRelocationDialog(QDialog):
         form.addRow(self.residual_check)
         form.addRow(self.extrapolate_check)
         form.addRow(self.single_check)
-        form.addRow(self.axis_check)
         legend = QLabel(
             _tr(
                 "<span style='color:#b8a000'>&#9632;</span> band of possible true "
@@ -902,8 +888,7 @@ class MoverRelocationDialog(QDialog):
                     band=self.band,
                     target_height=height,
                 )
-                if self.axis_check.isChecked():
-                    result, note = self._with_image_axis(result, points[0], height)
+                result, note = self._with_image_axis(result, points[0], height)
             else:
                 result = relocate(
                     scene.geometry,

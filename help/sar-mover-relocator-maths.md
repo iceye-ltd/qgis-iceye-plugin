@@ -303,8 +303,9 @@ in 6.4. One point does not give $\hat{\mathbf u}_{road}$, so:
 Section 6.8 optionally recovers a rough direction from the image.
 
 ### 6.8 Single click with an image-estimated axis (`estimate_constraint_axis`)
-A user decision reversing the original "no automatic road / wake detection" rule, as
-an option on top of 6.7. Around the click (radius `axis_radius_m`, 50 m):
+A user decision reversing the original "no automatic road / wake detection" rule. It
+always runs in single-click mode, with 6.7 as the fallback. Around the click (radius
+`axis_radius_m`, 50 m):
 
 1. $|s|^2$ is block-averaged to cells of about `axis_cell_m` (2 m) of ground, which
    also suppresses speckle, and $f = \log_{10}$ of it is differentiated per block.

@@ -104,7 +104,6 @@ class TestMoverRelocationDialog:
             dialog.residual_check,
             dialog.extrapolate_check,
             dialog.single_check,
-            dialog.axis_check,
             dialog.start_button,
         ):
             assert len(control.toolTip()) > 20, control
@@ -238,11 +237,21 @@ class TestMoverRelocationDialog:
         finally:
             project.layersAdded.disconnect(knock_out_tool)
 
-    def test_single_click_relocation(self, qgis_iface, slc_layer):
-        """With the toggle on, target click + one constraint click finishes."""
+    def test_single_click_relocation(self, qgis_iface, slc_layer, monkeypatch):
+        """With the toggle on, target click + one constraint click finishes.
+
+        The image-axis estimate always runs; here it finds no clear linear feature
+        (stubbed), so only a minimum speed remains.
+        """
+        import iceye_toolbox.gui.mover_relocation_tool as tool
+
+        monkeypatch.setattr(
+            tool,
+            "estimate_constraint_axis",
+            lambda *a, **k: ConstraintAxis(np.array([1.0, 0.0]), 0.05),
+        )
         dialog = self._dialog(qgis_iface)
         dialog.single_check.setChecked(True)
-        dialog.axis_check.setChecked(False)
         assert dialog.start()
         mover, imaged, on_road = _mover(dialog.scene)
         dialog.handle_click(imaged)
@@ -265,7 +274,6 @@ class TestMoverRelocationDialog:
 
         dialog = self._dialog(qgis_iface)
         dialog.single_check.setChecked(True)
-        assert dialog.axis_check.isEnabled() and dialog.axis_check.isChecked()
         assert dialog.start()
         heading = 100.0
         mover, imaged, on_road = _mover(dialog.scene, speed=10.0, heading=heading)
