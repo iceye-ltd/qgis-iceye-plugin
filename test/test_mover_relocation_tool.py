@@ -24,8 +24,10 @@ from iceye_toolbox.core.target_finder import ecef_to_geodetic, lonlat_to_ecef
 from iceye_toolbox.gui.mover_relocation_tool import (
     STEP_CONSTRAINT,
     STEP_DONE,
+    STEP_TARGET,
     MoverRelocationDialog,
     MoverScene,
+    OutputLayers,
     target_from_click,
 )
 
@@ -225,8 +227,9 @@ class TestMoverRelocationDialog:
             dialog.handle_click(on_road(60.0))
             assert dialog.step == STEP_DONE, dialog._result.text()
             assert qgis_iface.activeLayer() is slc_layer
-            # The relocated target's band is removed; the abandoned first one stays.
-            assert dialog.outputs.layer("band").featureCount() == 1
+            # The abandoned first band went with the new target, the second on
+            # relocation: no band is left.
+            assert dialog.outputs.layer("band") is None
         finally:
             project.layersAdded.disconnect(activate_added)
 
@@ -336,6 +339,64 @@ class TestMoverRelocationDialog:
         assert dialog.last_result.mode == "single_click"
         assert dialog.last_result.v_t is None
         assert "No clear linear feature" in dialog._result.text()
+
+    def test_band_only_for_current_target(self, qgis_iface, slc_layer):
+        """A new target or Esc removes the previous band; only one band ever shows."""
+        dialog = self._dialog(qgis_iface)
+        assert dialog.start()
+        _, imaged, on_road = _mover(dialog.scene)
+        dialog.handle_click(imaged)
+        assert dialog.outputs.layer("band").featureCount() == 1
+        dialog.start()  # Pick target again: the first target is abandoned.
+        assert dialog.outputs.layer("band") is None
+        dialog.handle_click(imaged)
+        assert len(OutputLayers.layers("band")) == 1
+        assert dialog.outputs.layer("band").featureCount() == 1
+        dialog.map_tool.cancelled.emit()  # Esc / right-click
+        assert dialog.outputs.layer("band") is None
+        assert dialog._band_rb.numberOfVertices() == 0
+
+    def test_band_from_earlier_panel_is_removed(self, qgis_iface, slc_layer):
+        """Layers left by a previous panel instance (e.g. plugin reload) are cleaned."""
+        first = self._dialog(qgis_iface)
+        assert first.start()
+        _, imaged, on_road = _mover(first.scene)
+        first.handle_click(imaged)
+        assert first.outputs.layer("band") is not None
+        first.close()
+
+        second = self._dialog(qgis_iface)
+        assert second.start()
+        second.handle_click(imaged)
+        assert len(OutputLayers.layers("band")) == 1
+        second.handle_click(on_road(-60.0))
+        second.handle_click(on_road(60.0))
+        assert second.step == STEP_DONE, second._result.text()
+        assert OutputLayers.layers("band") == []
+        assert OutputLayers.layers("ticks") == []
+
+    def test_reset_removes_everything(self, qgis_iface, slc_layer):
+        """Reset drops every Mover layer and overlay; the SLC and the tool remain."""
+        dialog = self._dialog(qgis_iface)
+        assert dialog.start()
+        _, imaged, on_road = _mover(dialog.scene)
+        dialog.handle_click(imaged)
+        dialog.handle_click(on_road(-60.0))
+        dialog.handle_click(on_road(60.0))
+        assert dialog.step == STEP_DONE
+        assert len(OutputLayers.layers()) >= 3
+        dialog.handle_click(imaged)  # a second, unfinished target with a band
+        assert dialog.outputs.layer("band") is not None
+
+        dialog.reset_all()
+        assert OutputLayers.layers() == []
+        assert dialog.last_result is None and dialog._result.text() == ""
+        assert dialog._band_rb.numberOfVertices() == 0
+        assert dialog._points_rb.numberOfVertices() == 0
+        assert QgsProject.instance().mapLayer(slc_layer.id()) is slc_layer
+        assert dialog.step == STEP_TARGET
+        dialog.handle_click(imaged)
+        assert dialog.outputs.layer("band") is not None
 
     def test_constraint_must_straddle(self, qgis_iface, slc_layer):
         """Two clicks on one side are rejected and the constraint step restarts."""

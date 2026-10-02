@@ -411,30 +411,41 @@ def _style(layer: QgsVectorLayer, key: str) -> None:
         layer.setLabelsEnabled(True)
 
 
+# Custom property marking a layer as Mover Relocation output (value: layer key).
+# Stored with the layer, so outputs are recognised after a plugin reload too.
+OUTPUT_PROPERTY = "iceye_toolbox/mover_output"
+
+
 class OutputLayers:
     """EPSG:4326 memory layers, created on first use and reused afterwards.
 
-    QGIS makes every newly added layer the active one; with ``iface`` the previously
-    active layer (the SLC) is restored so tools reading ``activeLayer()`` keep working.
+    Layers are found by ``OUTPUT_PROPERTY`` rather than remembered ids, so layers
+    from an earlier panel instance are reused and cleaned up as well. QGIS makes
+    every newly added layer the active one; with ``iface`` the previously active
+    layer (the SLC) is restored so tools reading ``activeLayer()`` keep working.
     """
 
     def __init__(self, iface=None) -> None:
-        """Start without layers."""
+        """Start; existing tagged layers in the project are picked up on use."""
         self.iface = iface
-        self.ids: dict[str, str] = {}
+
+    @staticmethod
+    def layers(key: str | None = None) -> list[QgsVectorLayer]:
+        """All Mover output layers in the project (only those of ``key`` if given)."""
+        found = []
+        for layer in QgsProject.instance().mapLayers().values():
+            tag = layer.customProperty(OUTPUT_PROPERTY)
+            if isinstance(layer, QgsVectorLayer) and tag and key in (None, tag):
+                found.append(layer)
+        return found
 
     def layer(self, key: str) -> QgsVectorLayer | None:
-        """Return the output layer for ``key`` if it still exists."""
-        layer = QgsProject.instance().mapLayer(self.ids.get(key, ""))
-        return layer if isinstance(layer, QgsVectorLayer) and layer.isValid() else None
+        """Return the output layer for ``key`` if there is one."""
+        found = [lyr for lyr in self.layers(key) if lyr.isValid()]
+        return found[0] if found else None
 
-    def add(
-        self, key: str, geometry: QgsGeometry, attributes: dict[str, Any]
-    ) -> int | None:
-        """Append one feature, creating the layer with fields from ``attributes``.
-
-        Returns the new feature id (None if the provider rejected it).
-        """
+    def add(self, key: str, geometry: QgsGeometry, attributes: dict[str, Any]) -> None:
+        """Append one feature, creating the layer with fields from ``attributes``."""
         layer = self.layer(key)
         if layer is None:
             kind, name = LAYERS[key]
@@ -443,10 +454,10 @@ class OutputLayers:
                 [QgsField(n, _field_type(v)) for n, v in attributes.items()]
             )
             layer.updateFields()
+            layer.setCustomProperty(OUTPUT_PROPERTY, key)
             _style(layer, key)
             active = self.iface.activeLayer() if self.iface is not None else None
             QgsProject.instance().addMapLayer(layer)
-            self.ids[key] = layer.id()
             if active is not None and self.iface.activeLayer() is not active:
                 self.iface.setActiveLayer(active)
         feature = QgsFeature(layer.fields())
@@ -454,23 +465,15 @@ class OutputLayers:
             if layer.fields().indexOf(name) >= 0:
                 feature.setAttribute(name, value)
         feature.setGeometry(geometry)
-        ok, added = layer.dataProvider().addFeatures([feature])
+        layer.dataProvider().addFeature(feature)
         layer.updateExtents()
         layer.triggerRepaint()
-        return added[0].id() if ok and added else None
 
-    def remove(self, key: str, feature_ids: list[int]) -> None:
-        """Delete features from an output layer; drop the layer once it is empty."""
-        layer = self.layer(key)
-        if layer is None or not feature_ids:
-            return
-        layer.dataProvider().deleteFeatures(feature_ids)
-        layer.updateExtents()
-        if layer.featureCount() == 0:
-            QgsProject.instance().removeMapLayer(layer.id())
-            self.ids.pop(key, None)
-        else:
-            layer.triggerRepaint()
+    def drop(self, *keys: str) -> None:
+        """Remove the output layers of ``keys`` from the project (all if none given)."""
+        doomed = [lyr.id() for key in (keys or (None,)) for lyr in self.layers(key)]
+        if doomed:
+            QgsProject.instance().removeMapLayers(doomed)
 
 
 def _points(lonlats) -> list[QgsPointXY]:
@@ -550,8 +553,6 @@ class MoverRelocationDialog(QDialog):
         self.last_result: Relocation | None = None
         self.step = STEP_IDLE
         self.outputs = OutputLayers(iface)
-        # Band / tick feature ids of the current target, removed once relocated.
-        self._band_features: dict[str, list[int]] = {}
 
         self.setWindowTitle(_tr("Mover Relocation"))
         self.setMinimumWidth(420)
@@ -690,11 +691,13 @@ class MoverRelocationDialog(QDialog):
         reset_btn = QPushButton(_tr("Reset"))
         reset_btn.setToolTip(
             _tr(
-                "Clear the current target, band and clicks (Esc or right-click on "
-                "the map does the same). Output layers are kept."
+                "Remove everything Mover Relocation added: all Mover layers (band, "
+                "ticks, imaged and true positions, displacements, tracks) and the "
+                "canvas overlays. Esc or right-click on the map only cancels the "
+                "current target."
             )
         )
-        reset_btn.clicked.connect(self.reset)
+        reset_btn.clicked.connect(self.reset_all)
         close_btn = QPushButton(_tr("Close"))
         close_btn.clicked.connect(self.close)
 
@@ -816,15 +819,22 @@ class MoverRelocationDialog(QDialog):
         return True
 
     def reset(self) -> None:
-        """Clear the current target, band and clicks (output layers are kept)."""
+        """Cancel the current target: clicks and its band / ticks (results kept)."""
         self.target = self.band = None
         self.clicks = []
-        self._band_rb.reset(Qgis.GeometryType.Polygon)
+        self._clear_band()
         self._constraint_rb.reset(Qgis.GeometryType.Line)
         self._points_rb.reset(Qgis.GeometryType.Point)
         self._readout.clear()
         if self.step != STEP_IDLE:
             self._set_step(STEP_TARGET)
+
+    def reset_all(self) -> None:
+        """Remove every Mover output layer and overlay, then await a new target."""
+        self.reset()
+        self.outputs.drop()
+        self.last_result = None
+        self._result.clear()
 
     def set_target(
         self, target: ImagedTarget, layer: QgsRasterLayer | None = None
@@ -916,6 +926,7 @@ class MoverRelocationDialog(QDialog):
         band = band_for_target(
             scene.geometry, target, target_class, self.settings(), limits
         )
+        self._clear_band()
         self.target, self.band = target, band
         crs = QgsCoordinateReferenceSystem(WGS84)
         self._band_rb.setToGeometry(
@@ -1047,16 +1058,14 @@ class MoverRelocationDialog(QDialog):
     # ------------------------------------------------------------------
 
     def _clear_band(self) -> None:
-        """Remove the relocated target's band and ticks to unclutter the image."""
-        for key, fids in self._band_features.items():
-            self.outputs.remove(key, fids)
-        self._band_features = {}
+        """Remove the band and ticks: they only ever show the current target."""
+        self.outputs.drop("band", "ticks")
         self._band_rb.reset(Qgis.GeometryType.Polygon)
 
     def _write_band(self, band: Band) -> None:
         target = band.target
         common = {"target_class": band.target_class.name}
-        band_fid = self.outputs.add(
+        self.outputs.add(
             "band",
             QgsGeometry.fromPolygonXY([_points(band.polygon_lonlat)]),
             {
@@ -1068,9 +1077,8 @@ class MoverRelocationDialog(QDialog):
                 "clipped": band.clipped,
             },
         )
-        tick_fids = []
         for tick in band.ticks:
-            fid = self.outputs.add(
+            self.outputs.add(
                 "ticks",
                 QgsGeometry.fromPointXY(QgsPointXY(*tick.lonlat)),
                 {
@@ -1080,12 +1088,6 @@ class MoverRelocationDialog(QDialog):
                     "label": tick.label,
                 },
             )
-            if fid is not None:
-                tick_fids.append(fid)
-        self._band_features = {
-            "band": [] if band_fid is None else [band_fid],
-            "ticks": tick_fids,
-        }
         self.outputs.add(
             "imaged",
             QgsGeometry.fromPointXY(QgsPointXY(*target.lonlat)),
