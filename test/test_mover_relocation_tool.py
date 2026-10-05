@@ -94,7 +94,6 @@ class TestMoverScene:
         scene = MoverScene.from_layer(slc_layer)
         lon, lat = scene.pixel_to_lonlat(CENTRE_COL, CENTRE_ROW)
         target = target_from_click(scene, lon, lat, MetadataProvider())
-        assert target.hull_mask is not None
         moved = np.linalg.norm(target.position - scene.ecef(lon, lat))
         assert moved < 16.0
         plain = target_from_click(

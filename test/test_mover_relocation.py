@@ -1,7 +1,7 @@
 """Tests for the two-click mover relocation in core.mover_relocation.
 
 Geometry (orbit, GCP geolocation) comes from the WWGTZ2 SLED crop fixture. Movers are
-simulated from their exact range history ``R(t) = |P(t) - S(t)|`` on the fitted orbit,
+simulated from their exact range history R(t) = |P(t) - S(t)| on the fitted orbit,
 so no image synthesis is needed: a constant-velocity target is imaged at the minimum
 of its range history, which is the stationary point a zero-Doppler processor focuses
 it to.
@@ -89,9 +89,9 @@ def scene_point(geometry, pixel_to_lonlat) -> np.ndarray:
     return lonlat_to_ecef(lon, lat, geometry.scene_height)
 
 
-# ----------------------------------------------------------------------------------
+################################################################################
 # Mover simulation helpers
-# ----------------------------------------------------------------------------------
+################################################################################
 
 
 def _on_surface(point: np.ndarray, height: float) -> np.ndarray:
@@ -112,7 +112,7 @@ def _mirrored_point(geometry: ProductGeometry, point: np.ndarray) -> np.ndarray:
 
 
 def _ground_velocity(point: np.ndarray, speed: float, heading_deg: float) -> np.ndarray:
-    """ECEF velocity of a horizontal motion with compass heading ``heading_deg``."""
+    """ECEF velocity of a horizontal motion with compass heading heading_deg."""
     lat, lon, _ = ecef_to_geodetic(point)
     basis = enu_basis(lon, lat)
     h = math.radians(heading_deg)
@@ -139,10 +139,10 @@ class SimulatedMover:
 def simulate_mover(
     geometry: ProductGeometry, p_true: np.ndarray, velocity: np.ndarray
 ) -> SimulatedMover:
-    """Range-history minimum of a mover that is at ``p_true`` at its zero-Doppler time.
+    """Range-history minimum of a mover that is at p_true at its zero-Doppler time.
 
-    ``t_true`` is the zero-Doppler time of ``p_true``: the moment the satellite crosses
-    the mover's zero-Doppler plane. ``(t_img, r_img)`` minimise ``|P(t) - S(t)|``.
+    t_true is the zero-Doppler time of p_true: the moment the satellite crosses
+    the mover's zero-Doppler plane. (t_img, r_img) minimise |P(t) - S(t)|.
     """
     orbit = geometry.orbit
     t_true, r_true = orbit.zero_doppler(p_true, 0.35)
@@ -199,9 +199,9 @@ def _angle_diff(a: float, b: float) -> float:
     return abs((a - b + 180.0) % 360.0 - 180.0)
 
 
-# ----------------------------------------------------------------------------------
-# Test 1: sign and chain validation
-# ----------------------------------------------------------------------------------
+################################################################################
+# Test sign and chain validation
+################################################################################
 
 # (look side, speed m/s, heading deg); headings cover approaching and receding
 # targets on both look sides, oblique and near-range-direction motion.
@@ -291,9 +291,9 @@ class TestSignValidation:
         assert 0.05 < np.linalg.norm(plain.p_true - scene_point) < 1.0
 
 
-# ----------------------------------------------------------------------------------
-# B: possible-location band, ticks and live readout
-# ----------------------------------------------------------------------------------
+################################################################################
+# Test possible-location band and cursor readout
+################################################################################
 
 
 class TestBand:
@@ -305,7 +305,7 @@ class TestBand:
         )
 
     def test_band_is_the_targets_range_line(self, geometry, scene_point):
-        """Every centre-line sample has the imaged slant range; span is +-dt_max."""
+        """Both edges follow the imaged range line; the span is +-dt_max."""
         target = self._target(geometry, scene_point)
         band = band_for_target(geometry, target, TARGET_CLASSES["ship"])
         local = local_geometry(geometry, target.time, target.position)
@@ -313,10 +313,12 @@ class TestBand:
         assert band.dt_max == pytest.approx(
             target.slant_range * v_max * local.sin_incidence / local.v_eff2
         )
-        for lon, lat in band.centre_lonlat:
-            p = lonlat_to_ecef(lon, lat, target.height)
-            _, r = geometry.orbit.zero_doppler(p, target.time)
-            assert r == pytest.approx(target.slant_range, abs=0.01)
+        for sign, edge in ((-1, band.near_lonlat), (1, band.far_lonlat)):
+            for lon, lat in edge:
+                p = lonlat_to_ecef(lon, lat, target.height)
+                _, r = geometry.orbit.zero_doppler(p, target.time)
+                expected = target.slant_range + sign * band.half_width_slant_m
+                assert r == pytest.approx(expected, abs=0.01)
         assert band.t_samples[0] == pytest.approx(target.time - band.dt_max)
         assert band.t_samples[-1] == pytest.approx(target.time + band.dt_max)
         # Ships: ~90 m per m/s on this geometry, so the half-length is ~0.7 to 1.3 km.
@@ -335,7 +337,9 @@ class TestBand:
         )
         assert band.half_width_m == pytest.approx(15.0)
         mid = len(band.t_samples) // 2
-        c = lonlat_to_ecef(*band.centre_lonlat[mid], target.height)
+        c = geometry.orbit.geocode(
+            target.slant_range, band.t_samples[mid], target.height, scene_point
+        )
         near = lonlat_to_ecef(*band.near_lonlat[mid], target.height)
         far = lonlat_to_ecef(*band.far_lonlat[mid], target.height)
         assert np.linalg.norm(near - c) == pytest.approx(15.0, rel=0.02)
@@ -407,9 +411,9 @@ class TestBand:
         assert cursor_readout(geometry, target, band, off_band) is None
 
 
-# ----------------------------------------------------------------------------------
-# C and D: intersection, derived quantities, uncertainty
-# ----------------------------------------------------------------------------------
+################################################################################
+# Test constraint intersection and derived quantities
+################################################################################
 
 
 class TestIntersection:
@@ -503,7 +507,7 @@ class TestIntersection:
         )
 
     def test_attributes(self, geometry, scene_point):
-        """The true-position attributes carry every field of the handoff."""
+        """The true-position attributes carry every output field."""
         mover, target = self._case(geometry, scene_point)
         a, b = _road(mover, geometry.scene_height)
         attributes = relocate(
@@ -530,9 +534,9 @@ class TestIntersection:
         assert attributes["v_t_kmh"] == pytest.approx(attributes["v_t"] * 3.6)
 
 
-# ----------------------------------------------------------------------------------
-# E: plausibility
-# ----------------------------------------------------------------------------------
+################################################################################
+# Test single-click relocation
+################################################################################
 
 
 class TestSingleClick:
@@ -682,6 +686,11 @@ class TestImageAxis:
         assert result.indicator == INDICATOR_AMBER
         assert len(result.constraint_lonlat) == 2
         assert result.attributes()["axis_coherence"] == 0.9
+
+
+################################################################################
+# Test plausibility
+################################################################################
 
 
 class TestPlausibility:

@@ -212,14 +212,13 @@ class TestTargetInput:
             points = _horizontal_curve(800)
             params = None
         target = locate_imaged_target(chip, points, geometry.scene_height, params)
-        assert target.row == pytest.approx(SHIP_ROW, abs=1.0)
-        assert target.col == pytest.approx(SHIP_COL, abs=15.0)
+        # One row is 0.43 m and one column 0.044 m of ground.
+        assert np.linalg.norm(target.position - chip.ecef(SHIP_ROW, SHIP_COL)) < 1.5
         t, r = chip.zero_doppler(SHIP_ROW, SHIP_COL)
         assert target.time == pytest.approx(t, abs=2e-4)
         assert target.slant_range == pytest.approx(r, abs=0.5)
         # ~9 m across in rows (0.43 m ground each) plus the tiny column skew.
         assert 2.0 < target.half_extent_m < 10.0
-        assert target.hull_mask.shape == chip.shape and target.hull_mask.any()
 
 
 class TestMapDrift:

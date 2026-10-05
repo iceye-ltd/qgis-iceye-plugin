@@ -1,16 +1,4 @@
-"""Mover Relocation: two-click relocation of moving targets in Spotlight / Dwell SLCs.
-
-1. Click the imaged target (snapped to its hull). The
-   possible-location band is drawn along the target's range line with ``|v_r|`` ticks,
-   and the cursor readout shows the radial velocity a band position implies.
-2. Click two points on the road / rail / bridge deck / wake axis, one on each side of
-   the band. The true position, displacement and velocity are computed with a
-   plausibility indicator.
-
-Clicks are mapped onto the surface the GCP-warped display lies on (mean GCP height),
-so they land on the pixels the user sees. For bridges click the deck's direct return,
-not its water-level line. All maths lives in ``core.mover_relocation``.
-"""
+"""Mover Relocation panel and map tool: relocate moving targets in Spotlight / Dwell SLCs."""
 
 from __future__ import annotations
 
@@ -93,11 +81,9 @@ from ..core.target_finder import (
 from .lens_tool import read_slc_data
 
 WGS84 = "EPSG:4326"
-# Largest SLC chip read around a click (complex samples).
-MAX_CHIP_PIXELS = 20_000_000
 _METRES_PER_DEG = 111_320.0
 
-# Output layers: key -> (geometry type, layer name).
+# Output layer key -> (geometry type, layer name).
 LAYERS = {
     "band": ("Polygon", "Mover band"),
     "ticks": ("Point", "Mover band ticks"),
@@ -107,18 +93,20 @@ LAYERS = {
     "track": ("LineString", "Mover track"),
 }
 
+# Custom property tagging Mover output layers; it survives a plugin reload.
+OUTPUT_PROPERTY = "iceye_toolbox/mover_output"
+
 _INDICATOR_COLORS = {"green": "#27ae60", "amber": "#e67e22", "red": "#c0392b"}
 
-# Canvas colours: saturated hues that read on dark sea and bright clutter alike,
-# each drawn with a black HALO casing.
+# Saturated colours with a black casing, readable on grayscale SAR.
 COLORS = {
-    "band": (255, 221, 0),  # yellow
+    "band": (255, 221, 0),
     "ticks": (255, 221, 0),
-    "imaged": (255, 0, 204),  # magenta
+    "imaged": (255, 0, 204),
     "displacement": (255, 0, 204),
-    "true": (57, 255, 20),  # lime
+    "true": (57, 255, 20),
     "track": (57, 255, 20),
-    "constraint": (0, 229, 255),  # cyan
+    "constraint": (0, 229, 255),
 }
 HALO = (0, 0, 0)
 
@@ -133,21 +121,25 @@ def _tr(message: str) -> str:
     return QCoreApplication.translate("ICEYE Toolbox", message)
 
 
-# ----------------------------------------------------------------------------------
-# Scene: one SLC layer's geometry and display surface
-# ----------------------------------------------------------------------------------
+def _log_warning(message: str) -> None:
+    """Log a warning to the ICEYE Toolbox message log."""
+    QgsMessageLog.logMessage(message, "ICEYE Toolbox", Qgis.MessageLevel.Warning)
 
 
 @dataclass
 class MoverScene:
-    """Geometry of the SLC layer the tool works on."""
+    """Geometry and GCP geolocation of the SLC layer the tool works on.
+
+    display_height is the mean GCP height: the surface the GCP-warped display lies
+    on, so clicks map back to the pixels the user sees.
+    """
 
     layer: QgsRasterLayer
+    layer_id: str
     geometry: ProductGeometry
     display_height: float
     pixel_to_lonlat: Any
     lonlat_to_pixel: Any
-    layer_id: str = ""
 
     @classmethod
     def from_layer(cls, layer: QgsRasterLayer) -> MoverScene:
@@ -156,15 +148,15 @@ class MoverScene:
         geometry = ProductGeometry.from_properties(read_iceye_properties(source))
         return cls(
             layer=layer,
+            layer_id=layer.id(),
             geometry=geometry,
             display_height=gcp_mean_height(source, geometry.scene_height),
             pixel_to_lonlat=gcp_pixel_to_lonlat(source),
             lonlat_to_pixel=gcp_lonlat_to_pixel(source),
-            layer_id=layer.id(),
         )
 
     def ecef(self, lon: float, lat: float):
-        """ECEF of a displayed point (on the display surface)."""
+        """ECEF of a displayed point, on the display surface."""
         return lonlat_to_ecef(lon, lat, self.display_height)
 
     def time_limits(self, target: ImagedTarget) -> tuple[float, float]:
@@ -179,48 +171,31 @@ class MoverScene:
         )
 
 
-def target_from_click(
-    scene: MoverScene,
-    lon: float,
-    lat: float,
-    metadata_provider: MetadataProvider,
-    detect_hull: bool = True,
-    params: RelocationParameters | None = None,
-) -> ImagedTarget:
-    """Imaged target at a click: the hull centroid nearby, or the click itself."""
-    geometry, h = scene.geometry, scene.display_height
-    if not detect_hull:
-        return ImagedTarget.from_ecef(geometry, scene.ecef(lon, lat), h)
-    params = params or RelocationParameters()
-    radius = (
-        params.corridor_half_width_m + params.ring_gap_m + params.ring_width_m + 5.0
-    )
-    chip, row, col = chip_around(scene, lon, lat, radius, metadata_provider)
-    rows, cols = chip.shape
-    fraction = (
-        min(max(col / max(cols - 1, 1), 0.0), 1.0),
-        min(max(row / max(rows - 1, 1), 0.0), 1.0),
-    )
-    return locate_imaged_target(chip, [fraction] * 4, h, params)
-
-
 def read_slc_chip(
     layer: QgsRasterLayer,
     extent: QgsRectangle,
     metadata_provider: MetadataProvider,
 ) -> SlcChip:
-    """Complex SLC chip of ``layer`` under ``extent`` (layer CRS), in file layout.
+    """Read the SLC samples of *layer* under *extent* (layer CRS) in file layout.
+
+    Parameters
+    ----------
+    layer : QgsRasterLayer
+        ICEYE SLC layer.
+    extent : QgsRectangle
+        Area to read, in the layer CRS.
+    metadata_provider : MetadataProvider
+        Source of the layer's look side.
+
+    Returns
+    -------
+    SlcChip
 
     Raises
     ------
     ValueError
-        With a user-facing message when the layer or extent cannot be read.
+        With a user-facing message when the area cannot be read.
     """
-    if not isinstance(layer, QgsRasterLayer) or layer.bandCount() < 2:
-        raise ValueError(_tr("Select an ICEYE SLC layer first."))
-    metadata = metadata_provider.get(layer)
-    if metadata is None:
-        raise ValueError(_tr("The active layer has no ICEYE metadata."))
     bounds = get_extend_image_coords(layer, extent)
     if bounds is None:
         raise ValueError(_tr("Could not map the click to SLC pixels."))
@@ -231,13 +206,11 @@ def read_slc_chip(
         or bounds.yMaximum() > layer.height()
     ):
         raise ValueError(_tr("The click is too close to the edge of the SLC."))
-    if bounds.width() * bounds.height() > MAX_CHIP_PIXELS:
-        raise ValueError(_tr("The area around the click is too large to read."))
     slc = read_slc_data(layer, extent, metadata_provider)
     if slc is None:
         raise ValueError(_tr("Failed to read the SLC samples."))
     source = layer.dataProvider().dataSourceUri()
-    left = (metadata.sar_observation_direction or "").lower() == "left"
+    left = (slc.metadata.sar_observation_direction or "").lower() == "left"
     return SlcChip(
         data=patch_to_file_layout(slc.data_patch, left),
         col0=int(bounds.xMinimum()),
@@ -253,8 +226,8 @@ def chip_around(
     lat: float,
     radius_m: float,
     metadata_provider: MetadataProvider,
-):
-    """SLC chip within ``radius_m`` of a point, and the point's chip (row, col)."""
+) -> tuple[SlcChip, float, float]:
+    """Read the SLC chip within *radius_m* of a point; return it and the point's (row, col)."""
     dlat = radius_m / _METRES_PER_DEG
     dlon = dlat / max(math.cos(math.radians(lat)), 1e-6)
     extent = QgsRectangle(lon - dlon, lat - dlat, lon + dlon, lat + dlat)
@@ -268,25 +241,48 @@ def chip_around(
     return chip, row - chip.row0 - 0.5, col - chip.col0 - 0.5
 
 
-# ----------------------------------------------------------------------------------
-# Map tool
-# ----------------------------------------------------------------------------------
+def target_from_click(
+    scene: MoverScene,
+    lon: float,
+    lat: float,
+    metadata_provider: MetadataProvider,
+    detect_hull: bool = True,
+) -> ImagedTarget:
+    """Return the imaged target at a click: the hull centroid nearby, or the click itself."""
+    geometry, h = scene.geometry, scene.display_height
+    if not detect_hull:
+        return ImagedTarget.from_ecef(geometry, scene.ecef(lon, lat), h)
+    params = RelocationParameters()
+    radius = (
+        params.corridor_half_width_m + params.ring_gap_m + params.ring_width_m + 5.0
+    )
+    chip, row, col = chip_around(scene, lon, lat, radius, metadata_provider)
+    rows, cols = chip.shape
+    fraction = (
+        min(max(col / max(cols - 1, 1), 0.0), 1.0),
+        min(max(row / max(rows - 1, 1), 0.0), 1.0),
+    )
+    return locate_imaged_target(chip, [fraction] * 4, h, params)
 
 
 class MoverRelocationMapTool(QgsMapTool):
-    """Emits clicks and cursor moves in EPSG:4326; right click or Esc cancels."""
+    """Map tool emitting clicks and cursor moves in EPSG:4326; right click or Esc cancels."""
 
     clicked = pyqtSignal(object)  # QgsPointXY, lon/lat
     moved = pyqtSignal(object)  # QgsPointXY, lon/lat
     cancelled = pyqtSignal()
 
     def __init__(self, canvas) -> None:
-        """Create the tool on ``canvas``."""
+        """Initialise the tool with a cross cursor.
+
+        Args:
+            canvas: The QGIS map canvas this tool operates on.
+        """
         super().__init__(canvas)
         self.setCursor(Qt.CursorShape.CrossCursor)
 
     def to_wgs84(self, point: QgsPointXY) -> QgsPointXY:
-        """Canvas CRS point to lon/lat."""
+        """Transform a canvas CRS point to lon/lat."""
         crs = self.canvas().mapSettings().destinationCrs()
         if crs.authid() == WGS84:
             return QgsPointXY(point)
@@ -300,24 +296,20 @@ class MoverRelocationMapTool(QgsMapTool):
         self.moved.emit(self.to_wgs84(event.mapPoint()))
 
     def canvasReleaseEvent(self, event) -> None:
-        """Left click: next input; right click: cancel."""
+        """Emit the next input on left click; cancel on right click."""
         if event.button() == Qt.MouseButton.RightButton:
             self.cancelled.emit()
         elif event.button() == Qt.MouseButton.LeftButton:
             self.clicked.emit(self.to_wgs84(event.mapPoint()))
 
     def keyPressEvent(self, event) -> None:
-        """Esc cancels the current relocation."""
+        """Cancel the current target on Esc."""
         if event.key() == Qt.Key.Key_Escape:
             self.cancelled.emit()
 
 
-# ----------------------------------------------------------------------------------
-# Output layers
-# ----------------------------------------------------------------------------------
-
-
 def _field_type(value: Any) -> QMetaType.Type:
+    """QGIS field type for an attribute value."""
     if isinstance(value, bool):
         return QMetaType.Type.Bool
     if isinstance(value, (int, float)) or value is None:
@@ -326,13 +318,14 @@ def _field_type(value: Any) -> QMetaType.Type:
 
 
 def _rgb(color: tuple[int, int, int], alpha: int = 255) -> str:
+    """'r,g,b,a' colour string for symbol properties."""
     return ",".join(str(c) for c in (*color, alpha))
 
 
 def _haloed_line(
     color: tuple[int, int, int], width: float, dashed: bool = False
 ) -> list[QgsSimpleLineSymbolLayer]:
-    """Return a black casing under a coloured line, visible on any pixel."""
+    """Black casing plus a coloured line on top."""
     casing = QgsSimpleLineSymbolLayer(QColor(*HALO), width + 0.6)
     line = QgsSimpleLineSymbolLayer(QColor(*color), width)
     if dashed:
@@ -341,7 +334,7 @@ def _haloed_line(
 
 
 def _arrowhead(color: tuple[int, int, int]) -> QgsMarkerLineSymbolLayer:
-    """Return a filled arrowhead on a line's last vertex, pointing along the line."""
+    """Return a filled arrowhead on a line's last vertex, pointing along it."""
     head = QgsMarkerSymbol.createSimple(
         {
             "name": "filled_arrowhead",
@@ -358,13 +351,10 @@ def _arrowhead(color: tuple[int, int, int]) -> QgsMarkerLineSymbolLayer:
 
 
 def _style(layer: QgsVectorLayer, key: str) -> None:
-    """Default symbology of each output layer, made to stand out on grayscale SAR."""
+    """Apply the default symbology of an output layer."""
     if key == "band":
         symbol = QgsFillSymbol.createSimple(
-            {
-                "color": _rgb(COLORS["band"], 45),
-                "outline_style": "no",
-            }
+            {"color": _rgb(COLORS["band"], 45), "outline_style": "no"}
         )
         for symbol_layer in _haloed_line(COLORS["band"], 0.6):
             symbol.appendSymbolLayer(symbol_layer)
@@ -374,8 +364,7 @@ def _style(layer: QgsVectorLayer, key: str) -> None:
         for symbol_layer in _haloed_line(COLORS[key], 0.8, dashed=key == "track"):
             symbol.appendSymbolLayer(symbol_layer)
         if key == "track":
-            # The track runs from collection start to end: an arrowhead on its
-            # last vertex shows the direction of travel.
+            # The track runs from collection start to end, so the arrow shows travel.
             symbol.appendSymbolLayer(_arrowhead(COLORS[key]))
     else:
         shapes = {
@@ -411,27 +400,25 @@ def _style(layer: QgsVectorLayer, key: str) -> None:
         layer.setLabelsEnabled(True)
 
 
-# Custom property marking a layer as Mover Relocation output (value: layer key).
-# Stored with the layer, so outputs are recognised after a plugin reload too.
-OUTPUT_PROPERTY = "iceye_toolbox/mover_output"
-
-
 class OutputLayers:
-    """EPSG:4326 memory layers, created on first use and reused afterwards.
+    """EPSG:4326 memory layers holding the Mover outputs.
 
-    Layers are found by ``OUTPUT_PROPERTY`` rather than remembered ids, so layers
-    from an earlier panel instance are reused and cleaned up as well. QGIS makes
-    every newly added layer the active one; with ``iface`` the previously active
-    layer (the SLC) is restored so tools reading ``activeLayer()`` keep working.
+    Layers are found by OUTPUT_PROPERTY, so layers from an earlier panel instance
+    are reused and cleaned up too. QGIS makes each added layer the active one, so
+    the previously active layer (the SLC) is restored after adding.
     """
 
-    def __init__(self, iface=None) -> None:
-        """Start; existing tagged layers in the project are picked up on use."""
+    def __init__(self, iface) -> None:
+        """Initialise with the QGIS interface.
+
+        Args:
+            iface: QGIS interface handle, used to restore the active layer.
+        """
         self.iface = iface
 
     @staticmethod
     def layers(key: str | None = None) -> list[QgsVectorLayer]:
-        """All Mover output layers in the project (only those of ``key`` if given)."""
+        """Return all Mover output layers in the project, or those of *key*."""
         found = []
         for layer in QgsProject.instance().mapLayers().values():
             tag = layer.customProperty(OUTPUT_PROPERTY)
@@ -440,12 +427,12 @@ class OutputLayers:
         return found
 
     def layer(self, key: str) -> QgsVectorLayer | None:
-        """Return the output layer for ``key`` if there is one."""
+        """Return the output layer for *key* if there is one."""
         found = [lyr for lyr in self.layers(key) if lyr.isValid()]
         return found[0] if found else None
 
     def add(self, key: str, geometry: QgsGeometry, attributes: dict[str, Any]) -> None:
-        """Append one feature, creating the layer with fields from ``attributes``."""
+        """Append one feature, creating the layer with fields from *attributes*."""
         layer = self.layer(key)
         if layer is None:
             kind, name = LAYERS[key]
@@ -456,7 +443,7 @@ class OutputLayers:
             layer.updateFields()
             layer.setCustomProperty(OUTPUT_PROPERTY, key)
             _style(layer, key)
-            active = self.iface.activeLayer() if self.iface is not None else None
+            active = self.iface.activeLayer()
             QgsProject.instance().addMapLayer(layer)
             if active is not None and self.iface.activeLayer() is not active:
                 self.iface.setActiveLayer(active)
@@ -470,46 +457,19 @@ class OutputLayers:
         layer.triggerRepaint()
 
     def drop(self, *keys: str) -> None:
-        """Remove the output layers of ``keys`` from the project (all if none given)."""
+        """Remove the output layers of *keys* from the project, or all of them."""
         doomed = [lyr.id() for key in (keys or (None,)) for lyr in self.layers(key)]
         if doomed:
             QgsProject.instance().removeMapLayers(doomed)
 
 
 def _points(lonlats) -> list[QgsPointXY]:
+    """QgsPointXY list from (lon, lat) pairs."""
     return [QgsPointXY(lon, lat) for lon, lat in lonlats]
 
 
-def format_relocation(result: Relocation) -> str:
-    """Rich-text summary with the traffic-light indicator."""
-    color = _INDICATOR_COLORS.get(result.indicator, "#7f8c8d")
-    lon, lat = result.true_lonlat
-    lines = [
-        f"<b style='color:{color}'>&#9679; {result.indicator.upper()}</b>"
-        + _tr(" flags: {flags}").format(flags=", ".join(result.flags) or "-"),
-        _tr("True position {lon:.6f}, {lat:.6f} at {utc}").format(
-            lon=lon, lat=lat, utc=result.t_true_utc
-        ),
-        _speed_line(result),
-        _tr(
-            "v_r {vr:+.2f} &plusmn; {s:.2f} m/s (towards radar +), v_gr {vgr:+.2f} m/s"
-        ).format(vr=result.v_r, s=result.sigma_v_r, vgr=result.v_gr),
-        _tr("dx {dx:+.0f} &plusmn; {s:.0f} m").format(
-            dx=result.dx_m, s=result.sigma_dx_m
-        )
-        + (
-            ""
-            if result.constraint_track_angle_deg is None
-            else _tr(", road angle to track {a:.0f} deg").format(
-                a=result.constraint_track_angle_deg
-            )
-        ),
-    ]
-    return "<br>".join(lines)
-
-
 def _speed_line(result: Relocation) -> str:
-    """Ground speed and heading, or the minimum speed in single-click mode."""
+    """Ground speed and heading, or the minimum speed when the heading is unknown."""
     if result.v_t is None:
         v = result.v_t_min
         return _tr(
@@ -528,13 +488,39 @@ def _speed_line(result: Relocation) -> str:
     )
 
 
-# ----------------------------------------------------------------------------------
-# Panel
-# ----------------------------------------------------------------------------------
+def format_relocation(result: Relocation) -> str:
+    """Rich-text summary of a relocation with its traffic-light indicator."""
+    color = _INDICATOR_COLORS.get(result.indicator, "#7f8c8d")
+    lon, lat = result.true_lonlat
+    dx_line = _tr("dx {dx:+.0f} &plusmn; {s:.0f} m").format(
+        dx=result.dx_m, s=result.sigma_dx_m
+    )
+    if result.constraint_track_angle_deg is not None:
+        dx_line += _tr(", road angle to track {a:.0f} deg").format(
+            a=result.constraint_track_angle_deg
+        )
+    lines = [
+        f"<b style='color:{color}'>&#9679; {result.indicator.upper()}</b>"
+        + _tr(" flags: {flags}").format(flags=", ".join(result.flags) or "-"),
+        _tr("True position {lon:.6f}, {lat:.6f} at {utc}").format(
+            lon=lon, lat=lat, utc=result.t_true_utc
+        ),
+        _speed_line(result),
+        _tr(
+            "v_r {vr:+.2f} &plusmn; {s:.2f} m/s (towards radar +), v_gr {vgr:+.2f} m/s"
+        ).format(vr=result.v_r, s=result.sigma_v_r, vgr=result.v_gr),
+        dx_line,
+    ]
+    return "<br>".join(lines)
 
 
 class MoverRelocationDialog(QDialog):
-    """Non-modal panel driving the two-click relocation on the map canvas."""
+    """Non-modal panel driving the moving-target relocation on the map canvas.
+
+    Step 1 is a click on the imaged target, which draws the band of possible true
+    positions. Step 2 is two clicks along the road, rail, bridge deck or wake, or
+    one click where it crosses the band.
+    """
 
     def __init__(
         self,
@@ -542,7 +528,14 @@ class MoverRelocationDialog(QDialog):
         metadata_provider: MetadataProvider | None = None,
         parent: QWidget | None = None,
     ) -> None:
-        """Build the panel; the map tool is created on the iface canvas."""
+        """Build the panel, its map tool and the canvas overlays.
+
+        Args:
+            iface: QGIS interface handle.
+            metadata_provider: Provider for ICEYE layer metadata; a default
+                instance is created when not supplied.
+            parent: Parent widget (usually the QGIS main window).
+        """
         super().__init__(parent)
         self.iface = iface
         self.metadata_provider = metadata_provider or MetadataProvider()
@@ -563,7 +556,6 @@ class MoverRelocationDialog(QDialog):
         self.map_tool.clicked.connect(self.handle_click)
         self.map_tool.moved.connect(self.handle_move)
         self.map_tool.cancelled.connect(self.reset)
-        # Saturated colours with a black casing stay visible on grayscale SAR.
         self._band_rb = QgsRubberBand(canvas, Qgis.GeometryType.Polygon)
         self._band_rb.setColor(QColor(*COLORS["band"]))
         self._band_rb.setFillColor(QColor(*COLORS["band"], 50))
@@ -644,7 +636,6 @@ class MoverRelocationDialog(QDialog):
                 "band instead (less accurate)."
             )
         )
-
         self.single_check = QCheckBox(
             _tr("Single click on the constraint (rough heading from the image)")
         )
@@ -729,12 +720,8 @@ class MoverRelocationDialog(QDialog):
         root.addLayout(buttons)
         self._set_step(STEP_IDLE)
 
-    # ------------------------------------------------------------------
-    # Settings
-    # ------------------------------------------------------------------
-
     def settings(self) -> RelocationSettings:
-        """Relocation settings from the panel controls."""
+        """Return the relocation settings from the panel controls."""
         return RelocationSettings(
             band_margin_m=self.margin_spin.value(),
             tick_step_mps=self.tick_spin.value(),
@@ -746,26 +733,23 @@ class MoverRelocationDialog(QDialog):
         """Return the selected target class."""
         return TARGET_CLASSES[self.class_combo.currentData()]
 
-    # ------------------------------------------------------------------
-    # Steps
-    # ------------------------------------------------------------------
-
     def _set_step(self, step: str) -> None:
+        """Switch workflow step and show its prompt."""
         self.step = step
+        if self.single_check.isChecked():
+            constraint = _tr(
+                "Step 2: click once where the road / rail / bridge deck / wake "
+                "crosses the band."
+            )
+        else:
+            constraint = _tr(
+                "Step 2: click two points on the road / rail / bridge deck / wake, "
+                "one on each side of the band ({n}/2)."
+            ).format(n=len(self.clicks))
         prompts = {
             STEP_IDLE: _tr("Select an ICEYE SLC layer, then Pick target."),
             STEP_TARGET: _tr("Step 1: click the imaged (displaced) target."),
-            STEP_CONSTRAINT: (
-                _tr(
-                    "Step 2: click once where the road / rail / bridge deck / wake "
-                    "crosses the band."
-                )
-                if self.single_check.isChecked()
-                else _tr(
-                    "Step 2: click two points on the road / rail / bridge deck / "
-                    "wake, one on each side of the band ({n}/2)."
-                ).format(n=len(self.clicks))
-            )
+            STEP_CONSTRAINT: constraint
             + _tr(
                 " On bridges click the deck's bright line, not its reflection on "
                 "the water."
@@ -775,12 +759,13 @@ class MoverRelocationDialog(QDialog):
         self._step_label.setText(prompts[step])
 
     def _activate_tool(self) -> None:
+        """Make the Mover map tool the canvas tool."""
         canvas = self.iface.mapCanvas()
         if canvas.mapTool() is not self.map_tool:
             canvas.setMapTool(self.map_tool)
 
     def _slc_layer(self, layer) -> QgsRasterLayer | None:
-        """``layer`` if it is an SLC, else the SLC already in use if still loaded."""
+        """*layer* if it is an SLC, else the SLC already in use if still loaded."""
         if isinstance(layer, QgsRasterLayer) and layer.bandCount() >= 2:
             return layer
         if self.scene is not None:
@@ -790,6 +775,7 @@ class MoverRelocationDialog(QDialog):
         return None
 
     def _ensure_scene(self, layer) -> bool:
+        """Load the scene for *layer* (or the SLC in use) and keep it active."""
         layer = self._slc_layer(layer)
         if layer is None:
             self._step_label.setText(_tr("Select an ICEYE SLC layer first."))
@@ -801,10 +787,10 @@ class MoverRelocationDialog(QDialog):
             try:
                 self.scene = MoverScene.from_layer(layer)
             except Exception as e:
+                _log_warning(f"Mover Relocation could not read the SLC: {e}")
                 self._step_label.setText(_tr("Cannot read the SLC: {e}").format(e=e))
                 return False
-        # Keep the SLC active so the tool and the toolbar
-        # policy all keep seeing the image layer.
+        # The toolbar policy and this tool read the active layer.
         if self.iface.activeLayer() is not layer:
             self.iface.setActiveLayer(layer)
         return True
@@ -819,7 +805,7 @@ class MoverRelocationDialog(QDialog):
         return True
 
     def reset(self) -> None:
-        """Cancel the current target: clicks and its band / ticks (results kept)."""
+        """Cancel the current target: its clicks, band and ticks (results kept)."""
         self.target = self.band = None
         self.clicks = []
         self._clear_band()
@@ -830,25 +816,14 @@ class MoverRelocationDialog(QDialog):
             self._set_step(STEP_TARGET)
 
     def reset_all(self) -> None:
-        """Remove every Mover output layer and overlay, then await a new target."""
+        """Remove every Mover output layer and overlay, then wait for a new target."""
         self.reset()
         self.outputs.drop()
         self.last_result = None
         self._result.clear()
 
-    def set_target(
-        self, target: ImagedTarget, layer: QgsRasterLayer | None = None
-    ) -> bool:
-        """Use an already located ``target`` and wait for the constraint."""
-        if not self._ensure_scene(layer or self.iface.activeLayer()):
-            return False
-        self.reset()
-        self._activate_tool()
-        self._use_target(target)
-        return True
-
     def handle_click(self, point: QgsPointXY) -> None:
-        """Next input of the two-click workflow (``point`` in lon/lat)."""
+        """Take the next click (lon/lat): the target, then the constraint."""
         if self.step in (STEP_TARGET, STEP_DONE):
             if self.scene is None:
                 return
@@ -863,6 +838,7 @@ class MoverRelocationDialog(QDialog):
                     detect_hull=self.detect_check.isChecked(),
                 )
             except Exception as e:
+                _log_warning(f"Mover Relocation could not read the target: {e}")
                 self._step_label.setText(
                     _tr("Could not read the target: {e}").format(e=e)
                 )
@@ -874,11 +850,8 @@ class MoverRelocationDialog(QDialog):
             self.clicks.append(QgsPointXY(point))
             self._draw_clicks()
             self._set_step(STEP_CONSTRAINT)
-            if len(self.clicks) >= self._clicks_needed():
+            if len(self.clicks) >= (1 if self.single_check.isChecked() else 2):
                 self._finish()
-
-    def _clicks_needed(self) -> int:
-        return 1 if self.single_check.isChecked() else 2
 
     def _on_mode_toggled(self, _checked: bool) -> None:
         """Restart the constraint step when switching between one and two clicks."""
@@ -889,7 +862,7 @@ class MoverRelocationDialog(QDialog):
             self._set_step(STEP_CONSTRAINT)
 
     def handle_move(self, point: QgsPointXY) -> None:
-        """Live ``|v_r|`` readout while the cursor is inside the band."""
+        """Show the |v_r| readout while the cursor is inside the band."""
         if self.band is None or self.scene is None or self.step != STEP_CONSTRAINT:
             return
         readout = cursor_readout(
@@ -912,29 +885,24 @@ class MoverRelocationDialog(QDialog):
             )
         )
 
-    # ------------------------------------------------------------------
-    # Band and relocation
-    # ------------------------------------------------------------------
-
     def _use_target(self, target: ImagedTarget) -> None:
+        """Draw the band of *target* and wait for the constraint clicks."""
         scene = self.scene
-        target_class = self.target_class()
         try:
             limits = scene.time_limits(target)
         except ValueError:
             limits = None
         band = band_for_target(
-            scene.geometry, target, target_class, self.settings(), limits
+            scene.geometry, target, self.target_class(), self.settings(), limits
         )
         self._clear_band()
         self.target, self.band = target, band
-        crs = QgsCoordinateReferenceSystem(WGS84)
         self._band_rb.setToGeometry(
-            QgsGeometry.fromPolygonXY([_points(band.polygon_lonlat)]), crs
+            QgsGeometry.fromPolygonXY([_points(band.polygon_lonlat)]),
+            QgsCoordinateReferenceSystem(WGS84),
         )
         self._write_band(band)
-        # Adding layers can make other tools hand the canvas back to Pan (via the
-        # toolbar policy's layer-change hooks); the constraint clicks come next.
+        # Adding layers can make other tools switch the canvas to Pan.
         self._activate_tool()
         self._set_step(STEP_CONSTRAINT)
         if band.clipped:
@@ -943,6 +911,7 @@ class MoverRelocationDialog(QDialog):
             self._result.clear()
 
     def _draw_clicks(self) -> None:
+        """Draw the constraint clicks, and the line between two of them."""
         crs = QgsCoordinateReferenceSystem(WGS84)
         self._points_rb.setToGeometry(QgsGeometry.fromMultiPointXY(self.clicks), crs)
         if len(self.clicks) == 2:
@@ -951,13 +920,14 @@ class MoverRelocationDialog(QDialog):
             )
 
     def _finish(self) -> None:
+        """Relocate the target from the constraint clicks and write the outputs."""
         scene, target = self.scene, self.target
         points = [scene.ecef(p.x(), p.y()) for p in self.clicks]
         target_class = self.target_class()
-        # Ships sit on the sea surface; other targets stay on the display surface.
+        # Ships sit on the sea surface; other targets on the display surface.
         height = scene.geometry.scene_height if target_class.name == "ship" else None
+        note = ""
         try:
-            note = ""
             if len(points) == 1:
                 result = relocate_single_click(
                     scene.geometry,
@@ -988,11 +958,7 @@ class MoverRelocationDialog(QDialog):
             self._set_step(STEP_CONSTRAINT)
             return
         except Exception as e:
-            QgsMessageLog.logMessage(
-                f"Mover relocation failed: {e}",
-                "ICEYE Toolbox",
-                Qgis.MessageLevel.Warning,
-            )
+            _log_warning(f"Mover relocation failed: {e}")
             self._result.setText(_tr("Relocation failed: {e}").format(e=e))
             return
         self.last_result = result
@@ -1020,6 +986,7 @@ class MoverRelocationDialog(QDialog):
             )
             axis = estimate_constraint_axis(chip, row, col, settings)
         except Exception as e:
+            _log_warning(f"Mover Relocation could not estimate the road axis: {e}")
             return basic, "<br>" + _tr("Road direction not estimated: {e}").format(e=e)
         if axis.coherence < settings.min_axis_coherence:
             return basic, "<br>" + _tr(
@@ -1048,21 +1015,19 @@ class MoverRelocationDialog(QDialog):
         ).format(c=axis.coherence)
 
     def _show_spawned_points(self, result: Relocation) -> None:
+        """Draw the two points placed along the image-estimated road axis."""
         crs = QgsCoordinateReferenceSystem(WGS84)
         spawned = _points(result.constraint_lonlat)
         self._points_rb.setToGeometry(QgsGeometry.fromMultiPointXY(spawned), crs)
         self._constraint_rb.setToGeometry(QgsGeometry.fromPolylineXY(spawned), crs)
 
-    # ------------------------------------------------------------------
-    # Output layers
-    # ------------------------------------------------------------------
-
     def _clear_band(self) -> None:
-        """Remove the band and ticks: they only ever show the current target."""
+        """Remove the band and ticks; they only ever show the current target."""
         self.outputs.drop("band", "ticks")
         self._band_rb.reset(Qgis.GeometryType.Polygon)
 
     def _write_band(self, band: Band) -> None:
+        """Add the band, its ticks and the imaged position to the output layers."""
         target = band.target
         common = {"target_class": band.target_class.name}
         self.outputs.add(
@@ -1100,6 +1065,7 @@ class MoverRelocationDialog(QDialog):
         )
 
     def _write_result(self, result: Relocation) -> None:
+        """Add the true position, displacement and track to the output layers."""
         attributes = result.attributes()
         true_point = QgsPointXY(*result.true_lonlat)
         self.outputs.add("true", QgsGeometry.fromPointXY(true_point), attributes)
@@ -1114,10 +1080,6 @@ class MoverRelocationDialog(QDialog):
                 QgsGeometry.fromPolylineXY(_points(result.track_lonlat)),
                 attributes,
             )
-
-    # ------------------------------------------------------------------
-    # Lifecycle
-    # ------------------------------------------------------------------
 
     def closeEvent(self, event) -> None:
         """Release the map tool and clear the canvas overlays."""

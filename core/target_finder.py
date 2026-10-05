@@ -1,28 +1,15 @@
-"""SLC geometry and target detection for moving-target relocation (Spotlight / Dwell).
+"""SLC geometry, target detection and map drift for moving-target relocation.
 
-Shared by ``core.mover_relocation`` (the two-click relocation tool):
+Orbit fit, range-Doppler inverse and geocoding, SLC chips with GCP geolocation, and
+the corridor, clutter ring and hull masks used by core.mover_relocation. The map
+drift (find_targets_along_curve, map_drift) is kept only for an optional
+along-track velocity check; its sign is not yet validated against a known mover.
 
-* Orbit polynomial fit, range-Doppler inverse (``Orbit.zero_doppler``) and zero-Doppler
-  geocoding onto a height surface (``Orbit.geocode``); ``Ka``, ``V_eff`` and ``V_g``
-  from the orbit (``ProductGeometry.kinematics``).
-* SLC chips in file layout (rows = range samples, columns = azimuth lines) with GCP
-  geolocation, and the curve / click corridor, clutter ring and hull masks.
-* Sub-aperture map drift along a curve (``find_targets_along_curve``, ``map_drift``),
-  kept only for an optional along-track velocity consistency check.
-
-The Doppler-centroid radial-velocity estimate, its truncation correction and the
-reference-Doppler iteration were removed: in Spotlight / Dwell the beam-steered
-centroid moves at almost exactly the FM rate, so a mover's own echoes carry no usable
-radial velocity (``doppler_amplification`` ~ 3000 on the WWGTZ2 fixture).
-
-Conventions found on real products (WWGTZ2 SLED fixture):
-
-* Azimuth sample spacing is ``1 / iceye:processing_prf``; the time direction along file
-  columns is taken from the geolocation (it decreases with column index there).
-* Map drift assumes the hull reflects over the whole aperture. A straight structure
-  whose specular point slides with look angle drifts like a mover.
-* The map-drift sign (via ``DOPPLER_SIGN`` and the phase convention of
-  ``core.raster.read_slc_layer``) is not verified against a mover with known motion.
+The Doppler-centroid radial-velocity estimate was removed: in Spotlight / Dwell the
+beam-steered centroid moves at almost exactly the FM rate, so a mover's own echoes
+carry no usable radial velocity (doppler_amplification is ~3000 on the WWGTZ2
+fixture). Azimuth sample spacing is 1 / iceye:processing_prf, and the time direction
+along file columns is taken from the geolocation.
 """
 
 from __future__ import annotations
@@ -440,7 +427,7 @@ def gcp_lonlat_to_pixel(
 
 
 def gcp_mean_height(source_path: str, default: float = 0.0) -> float:
-    """Mean GCP height: the surface the GCP-warped display of the SLC lies on."""
+    """Return the mean GCP height, the surface the GCP-warped display lies on."""
     dataset = gdal.Open(source_path)
     if dataset is None:
         raise ValueError(f"Failed to open {source_path}")
@@ -658,11 +645,9 @@ def hull_and_clutter_masks(
 def doppler_amplification(
     geometry: ProductGeometry, t: float, point: NDArray[np.float64]
 ) -> float:
-    """Error gain ``1 / |1 - dfdc_dt / Ka|`` of a Doppler-centroid relocation.
+    """Return the error gain 1 / |1 - dfdc_dt / Ka| of a Doppler-centroid relocation.
 
-    Diagnostic only: in Spotlight / Dwell the beam-steered centroid moves at almost
-    exactly the FM rate (``A ~ 3000`` on the WWGTZ2 fixture), so a mover's own echoes
-    carry no usable radial velocity and no Doppler estimate is used for relocation.
+    Diagnostic only; about 3000 on the WWGTZ2 Dwell fixture.
     """
     _, r = geometry.orbit.zero_doppler(point, t)
     gain = (
@@ -853,10 +838,9 @@ def along_track_velocity(
     control_points: Sequence[Any],
     params: RelocationParameters | None = None,
 ) -> tuple[float | None, float | None, list[CurveTarget]]:
-    """Map-drift along-track velocity (m/s), its fit R^2 and the per-look targets.
+    """Return the map-drift along-track velocity (m/s), its fit R^2 and the looks.
 
-    For the optional ``v_a`` consistency check of the two-click relocation only; its
-    sign is not yet validated.
+    For the optional v_a consistency check; its sign is not yet validated.
     """
     params = params or RelocationParameters()
     frame = _local_frame(chip, *_curve_centre(chip, control_points))
