@@ -201,17 +201,22 @@ class TestBand:
         # Ships: about 90 m of along-track shift per m/s on this geometry.
         assert 700 < band.dx_max_m < 1300
         assert not band.clipped
+
+        def zero_doppler_time(lonlat):
+            point = lonlat_to_ecef(*lonlat, target.height)
+            return geometry.orbit.zero_doppler(point, target.time)[0]
+
         for tick in band.ticks:
-            assert tick.t == pytest.approx(
-                target.time - target.slant_range * tick.v_r / local.v_eff2
+            assert zero_doppler_time(tick.lonlat) == pytest.approx(
+                target.time - target.slant_range * tick.v_r / local.v_eff2, abs=1e-6
             )
-        assert all(t.t < target.time for t in band.ticks if t.v_r > 0)
 
         limits = (target.time - 0.2, target.time + 0.5)
         clipped = band_for_target(
             geometry, target, TARGET_CLASSES["car"], time_limits=limits
         )
-        assert clipped.clipped and min(clipped.t_samples) >= limits[0] - 1e-12
+        assert clipped.clipped
+        assert zero_doppler_time(clipped.near_lonlat[0]) >= limits[0] - 1e-6
 
     def test_cursor_readout(self, geometry, scene_point):
         """Inside the band the readout converts zero-Doppler offset to |v_r|."""

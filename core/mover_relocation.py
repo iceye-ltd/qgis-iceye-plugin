@@ -186,12 +186,11 @@ class ImagedTarget:
         geometry: ProductGeometry,
         point: NDArray[np.float64],
         height: float,
-        half_extent_m: float = 0.0,
     ) -> ImagedTarget:
         """Create a target at an ECEF point on the display surface."""
         point = np.asarray(point, np.float64)
         t, r = geometry.orbit.zero_doppler(point, _mid_time(geometry))
-        return cls(r, t, point, height, half_extent_m)
+        return cls(r, t, point, height)
 
     @property
     def lonlat(self) -> tuple[float, float]:
@@ -256,7 +255,6 @@ class BandTick:
     """Point on the band where v_r has a round value (signed, towards radar > 0)."""
 
     v_r: float
-    t: float
     lonlat: tuple[float, float]
     v_ground_min: float
     label: str
@@ -272,7 +270,6 @@ class Band:
     dx_max_m: float
     half_width_m: float
     half_width_slant_m: float
-    t_samples: list[float]
     near_lonlat: list[tuple[float, float]]
     far_lonlat: list[tuple[float, float]]
     ticks: list[BandTick]
@@ -360,7 +357,6 @@ def band_for_target(
             ticks.append(
                 BandTick(
                     v_r=v_r,
-                    t=t,
                     lonlat=ecef_to_lonlat(p),
                     v_ground_min=v_ground_min,
                     label=f"{v:.0f} m/s (>= {v_ground_min:.0f} m/s ground)",
@@ -375,7 +371,6 @@ def band_for_target(
         dx_max_m=local.v_ground * dt_max,
         half_width_m=half_width,
         half_width_slant_m=half_width_slant,
-        t_samples=times,
         near_lonlat=line(r_img - half_width_slant),
         far_lonlat=line(r_img + half_width_slant),
         ticks=ticks,
