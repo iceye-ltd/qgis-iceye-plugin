@@ -104,6 +104,8 @@ Impulse Response Function (IRF) analysis tool for a bright point target on SLC d
 >[!TIP]
 >Select the SLC layer in the Layers panel, click the IRF Analysis button on the ICEYE Measuring toolbar, then click on or near a point-like target (e.g. corner reflector). A dialog opens with the two profiles and the metrics table; the map tool turns off after one analysis. Click the button again for another point.
 
+[measuring-tools-demo.webm](https://github.com/user-attachments/assets/6094f5be-073e-4bcd-b0e0-198798c3700f)
+
 #### Mover Relocation
 
 Finds the true position of a moving target (car, train or ship) in a Spotlight or Dwell SLC. A mover with a radial velocity is imaged displaced along track, on its own range line. The tool draws that line as a yellow band of possible true positions with radial-velocity ticks, and the true position is where the target's road, rail, bridge deck or wake crosses the band. It reports the true position and time, displacement, radial velocity, ground speed and heading, with a green / amber / red plausibility indicator. Outputs are added as **Mover** layers: imaged position, true position, displacement line and a track whose arrow shows the direction of travel.
@@ -114,10 +116,7 @@ Finds the true position of a moving target (car, train or ship) in a Spotlight o
 > [!TIP]
 > Select the SLC layer, open **Mover Relocation** and choose the target class. Click **Pick target** and click the imaged (displaced) target; the click snaps to its bright return and the band appears. Hover over the band to read the radial velocity a position implies. Then click two points on the road / rail / bridge deck / wake, one on each side of the band. With **Single click on the constraint**, click once where it crosses the band instead; the road direction is then estimated from the image (check the cyan points), or only a minimum speed is given if no clear line is found. On bridges click the deck's bright line, not its reflection on the water. **Esc** or right-click cancels the current target; **Reset** removes all Mover layers. Hover over a setting in the panel to see what it does.
 
-<!-- TODO: add the Mover Relocation demo video link here -->
-
-
-[measuring-tools-demo.webm](https://github.com/user-attachments/assets/6094f5be-073e-4bcd-b0e0-198798c3700f)
+[mover-relocator-demo.webm](https://github.com/user-attachments/assets/2c5858dd-69a2-4dca-92b9-fd03762009a2)]
 
 #### Batch processing
 
