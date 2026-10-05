@@ -357,7 +357,9 @@ class SAROverlayToolbarBase:
         canvas = self.iface.mapCanvas()
         if checked:
             canvas.setMapTool(self._placement_tool)
-        else:
+        elif canvas.mapTool() is self._placement_tool:
+            # Only hand back to Pan if this tool is the active one; otherwise a
+            # layer change would knock out whatever other tool is in use.
             canvas.unsetMapTool(self._placement_tool)
             self.iface.actionPan().trigger()
 

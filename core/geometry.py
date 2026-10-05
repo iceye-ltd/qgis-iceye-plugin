@@ -327,7 +327,7 @@ def ecef_to_geodetic(
     for _ in range(5):  # Usually converges in 2-3 iterations
         N = a / np.sqrt(1 - (a * a - b * b) / (a * a) * np.sin(lat) ** 2)
         h = p / np.cos(lat) - N
-        lat = np.arctan2(z, p * (1 - N * (a * a - b * b) / (a * a + h) / N))
+        lat = np.arctan2(z, p * (1 - (a * a - b * b) / (a * a) * N / (N + h)))
 
     return lat, lon
 

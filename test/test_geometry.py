@@ -24,6 +24,15 @@ def expected_values():
 class TestCoordinateConversion:
     """Robust coordinate conversion tests using expected values."""
 
+    @pytest.mark.parametrize("h", [-3.0, 100.0, 1000.0, 9000.0])
+    def test_round_trip_off_the_ellipsoid(self, h):
+        """Latitude survives a geodetic -> ECEF -> geodetic round trip at height h."""
+        for lat in (-70.0, -39.0, 0.5, 39.0, 75.0):
+            x, y, z = geodetic_to_ecef(lat, 117.0, h)
+            lat_back, lon_back = ecef_to_geodetic(x, y, z)
+            assert np.degrees(lat_back) == pytest.approx(lat, abs=1e-9)
+            assert np.degrees(lon_back) == pytest.approx(117.0, abs=1e-9)
+
     def test_all_coordinate_conversions(self, expected_values):
         """Test coordinate conversions against all expected values."""
         coord_data = expected_values["coordinate_conversions"]

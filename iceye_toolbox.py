@@ -44,6 +44,7 @@ from .gui.crop_toolbar import CropToolbarAction
 from .gui.lens_tool import LensToolbarAction
 from .gui.measuring_tool import MeasuringToolbarAction
 from .gui.metadata_widget import MetadataWidget
+from .gui.mover_relocation_tool import MoverRelocationDialog
 from .gui.stac_catalog_widget import StacCatalogWidget
 from .gui.toolbar_button_policy import ToolbarButtonPolicy
 
@@ -112,6 +113,7 @@ class IceyeToolbox:
         self.stac_catalog_widget = StacCatalogWidget(parent=self.iface.mainWindow())
         self.stac_catalog_action = None
         self.export_layer_action = None
+        self.mover_relocation_dialog: MoverRelocationDialog | None = None
         self.mandala_toolbar_action = MandalaToolbarAction(
             self.iface,
             metadata_provider=self.metadata_provider,
@@ -276,6 +278,18 @@ class IceyeToolbox:
             status_tip="Export the current canvas",
         )
 
+        mover_action = self.add_action(
+            icon_path=":/plugins/iceye_toolbox/mover-relocation.svg",
+            text=self.tr("Mover Relocation"),
+            callback=self.open_mover_relocation,
+            add_to_toolbar=False,
+            parent=self.iface.mainWindow(),
+            status_tip="Relocate a moving target in an ICEYE SAR image: click the "
+            "target, then its road, rail, bridge or wake",
+        )
+        # Next to the SAR mandala placement button on the SAR View toolbar.
+        self.mandala_toolbar_action.toolbar.addAction(mover_action)
+
         self.run()
 
     # --------------------------------------------------------------------------
@@ -312,6 +326,11 @@ class IceyeToolbox:
             self.iface.removeDockWidget(self.stac_catalog_widget)
             self.stac_catalog_widget.deleteLater()
             self.stac_catalog_widget = None
+
+        if self.mover_relocation_dialog is not None:
+            self.mover_relocation_dialog.close()
+            self.mover_relocation_dialog.deleteLater()
+            self.mover_relocation_dialog = None
 
         for action in self.actions:
             try:
@@ -385,6 +404,18 @@ class IceyeToolbox:
             self.stac_catalog_widget.raise_()
         else:
             self.stac_catalog_widget.hide()
+
+    def open_mover_relocation(self) -> MoverRelocationDialog:
+        """Show the Mover Relocation panel, creating it on first use."""
+        if self.mover_relocation_dialog is None:
+            self.mover_relocation_dialog = MoverRelocationDialog(
+                self.iface,
+                metadata_provider=self.metadata_provider,
+                parent=self.iface.mainWindow(),
+            )
+        self.mover_relocation_dialog.show()
+        self.mover_relocation_dialog.raise_()
+        return self.mover_relocation_dialog
 
     def _on_stac_visibility_changed(self, visible: bool) -> None:
         if not self.stac_catalog_action:

@@ -435,7 +435,7 @@ class MeasuringToolbarAction(SAROverlayToolbarBase):
         canvas = self.iface.mapCanvas()
         if checked:
             canvas.setMapTool(self._irf_tool)
-        else:
+        elif canvas.mapTool() is self._irf_tool:
             canvas.unsetMapTool(self._irf_tool)
             self.iface.actionPan().trigger()
 

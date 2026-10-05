@@ -21,6 +21,7 @@
         <file>irf.svg</file>
         <file>batch_masks.svg</file>
         <file>batch_process.svg</file>
+        <file>mover-relocation.svg</file>
     </qresource>
     <qresource prefix="/plugins/iceye_toolbox/styles">
         <file>iceye_default.qml</file>

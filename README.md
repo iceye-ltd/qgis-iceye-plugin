@@ -106,6 +106,20 @@ Impulse Response Function (IRF) analysis tool for a bright point target on SLC d
 
 [measuring-tools-demo.webm](https://github.com/user-attachments/assets/6094f5be-073e-4bcd-b0e0-198798c3700f)
 
+#### Mover Relocation
+
+Finds the true position of a moving target (car, train or ship) in an ICEYE SAR image in slant-range geometry, such as an SLC or its colour product. A mover with a radial velocity is imaged displaced along track, on its own range line. The tool draws that line as a yellow band of possible true positions with radial-velocity ticks, and the true position is where the target's road, rail, bridge deck or wake crosses the band. It reports the true position and time, displacement, radial velocity, ground speed and heading, with a green / amber / red plausibility indicator. Outputs are added as **Mover** layers: imaged position, true position, displacement line and a track whose arrow shows the direction of travel.
+
+> [!WARNING]
+> Requires an ICEYE image layer with its metadata (orbit and GCPs); complex samples are not needed. The road, wake or bridge must be visible in the image; the tool uses no AIS or map data.
+>
+> The tool assumes slant-range geometry (e.g. SLC or its colour product). Ground-range or terrain-corrected images are not supported.
+
+> [!TIP]
+> Select the image layer, open **Mover Relocation** and choose the target class. Click **Pick target** and click the centre of the imaged (displaced) target; the band appears. Hover over the band to read the radial velocity a position implies. Then click two points on the road / rail / bridge deck / wake, one on each side of the band. With **Single click on the constraint**, click once where it crosses the band instead; the road direction is then estimated from the image (check the cyan points), or only a minimum speed is given if no clear line is found. On bridges click the deck's bright line, not its reflection on the water. **Esc** or right-click cancels the current target; **Reset** removes all Mover layers. Hover over a setting in the panel to see what it does.
+
+[mover-relocator-demo.webm](https://github.com/user-attachments/assets/2c5858dd-69a2-4dca-92b9-fd03762009a2)
+
 #### Batch processing
 
 The **ICEYE Batch** toolbar collects several areas on the map, then runs **Crop**, **Color**, **Focus**, or **Video** on each area **one after another** (sequential background tasks).
