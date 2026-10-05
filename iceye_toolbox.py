@@ -284,7 +284,7 @@ class IceyeToolbox:
             callback=self.open_mover_relocation,
             parent=self.iface.mainWindow(),
             status_tip="Relocate a moving target in a Spotlight / Dwell SLC: click "
-            "the target, then two points on its road, rail, bridge or wake",
+            "the target, then its road, rail, bridge or wake",
         )
 
         self.run()
