@@ -284,8 +284,8 @@ class IceyeToolbox:
             callback=self.open_mover_relocation,
             add_to_toolbar=False,
             parent=self.iface.mainWindow(),
-            status_tip="Relocate a moving target in a Spotlight / Dwell SLC: click "
-            "the target, then its road, rail, bridge or wake",
+            status_tip="Relocate a moving target in an ICEYE SAR image: click the "
+            "target, then its road, rail, bridge or wake",
         )
         # Next to the SAR mandala placement button on the SAR View toolbar.
         self.mandala_toolbar_action.toolbar.addAction(mover_action)

@@ -1,4 +1,4 @@
-"""Mover Relocation panel and map tool: relocate moving targets in Spotlight / Dwell SLCs."""
+"""Mover Relocation panel and map tool: relocate moving targets in ICEYE SAR images."""
 
 from __future__ import annotations
 
@@ -6,6 +6,8 @@ import math
 from dataclasses import dataclass
 from typing import Any
 
+import numpy as np
+from osgeo import gdal
 from qgis.core import (
     Qgis,
     QgsCoordinateReferenceSystem,
@@ -33,7 +35,6 @@ from qgis.gui import QgsMapTool, QgsRubberBand
 from qgis.PyQt.QtCore import QCoreApplication, QMetaType, Qt, pyqtSignal
 from qgis.PyQt.QtGui import QColor
 from qgis.PyQt.QtWidgets import (
-    QApplication,
     QCheckBox,
     QComboBox,
     QDialog,
@@ -62,23 +63,19 @@ from ..core.mover_relocation import (
     cursor_readout,
     estimate_constraint_axis,
     image_time_limits,
-    locate_imaged_target,
     relocate,
     relocate_from_axis,
     relocate_single_click,
 )
 from ..core.target_finder import (
-    HullParameters,
+    ImageChip,
     ProductGeometry,
-    SlcChip,
     gcp_lonlat_to_pixel,
     gcp_mean_height,
     gcp_pixel_to_lonlat,
     lonlat_to_ecef,
-    patch_to_file_layout,
     read_iceye_properties,
 )
-from .lens_tool import read_slc_data
 
 WGS84 = "EPSG:4326"
 _METRES_PER_DEG = 111_320.0
@@ -128,7 +125,7 @@ def _log_warning(message: str) -> None:
 
 @dataclass
 class MoverScene:
-    """Geometry and GCP geolocation of the SLC layer the tool works on.
+    """Geometry and GCP geolocation of the image layer the tool works on.
 
     display_height is the mean GCP height: the surface the GCP-warped display lies
     on, so clicks map back to the pixels the user sees.
@@ -143,7 +140,7 @@ class MoverScene:
 
     @classmethod
     def from_layer(cls, layer: QgsRasterLayer) -> MoverScene:
-        """Parse metadata and GCP geolocation of an ICEYE SLC layer."""
+        """Parse metadata and GCP geolocation of an ICEYE layer."""
         source = layer.dataProvider().dataSourceUri()
         geometry = ProductGeometry.from_properties(read_iceye_properties(source))
         return cls(
@@ -171,63 +168,49 @@ class MoverScene:
         )
 
 
-def read_slc_chip(
-    layer: QgsRasterLayer,
-    extent: QgsRectangle,
-    metadata_provider: MetadataProvider,
-) -> SlcChip:
-    """Read the SLC samples of *layer* under *extent* (layer CRS) in file layout.
+def read_image_chip(scene: MoverScene, extent: QgsRectangle) -> ImageChip:
+    """Read the amplitude of the scene's raster under *extent* (layer CRS).
 
-    Parameters
-    ----------
-    layer : QgsRasterLayer
-        ICEYE SLC layer.
-    extent : QgsRectangle
-        Area to read, in the layer CRS.
-    metadata_provider : MetadataProvider
-        Source of the layer's look side.
-
-    Returns
-    -------
-    SlcChip
+    Two-band ICEYE SLCs hold amplitude and phase, so band 1 is used; other rasters
+    (colour, amplitude) use the root mean square of their bands.
 
     Raises
     ------
     ValueError
         With a user-facing message when the area cannot be read.
     """
+    layer = scene.layer
     bounds = get_extend_image_coords(layer, extent)
     if bounds is None:
-        raise ValueError(_tr("Could not map the click to SLC pixels."))
+        raise ValueError(_tr("Could not map the click to image pixels."))
     if (
         bounds.xMinimum() < 0
         or bounds.yMinimum() < 0
         or bounds.xMaximum() > layer.width()
         or bounds.yMaximum() > layer.height()
     ):
-        raise ValueError(_tr("The click is too close to the edge of the SLC."))
-    slc = read_slc_data(layer, extent, metadata_provider)
-    if slc is None:
-        raise ValueError(_tr("Failed to read the SLC samples."))
-    source = layer.dataProvider().dataSourceUri()
-    left = (slc.metadata.sar_observation_direction or "").lower() == "left"
-    return SlcChip(
-        data=patch_to_file_layout(slc.data_patch, left),
-        col0=int(bounds.xMinimum()),
-        row0=int(bounds.yMinimum()),
-        geometry=ProductGeometry.from_properties(read_iceye_properties(source)),
-        pixel_to_lonlat=gcp_pixel_to_lonlat(source),
-    )
+        raise ValueError(_tr("The click is too close to the edge of the image."))
+    col0, row0 = int(bounds.xMinimum()), int(bounds.yMinimum())
+    width, height = int(bounds.width()), int(bounds.height())
+    dataset = gdal.Open(layer.dataProvider().dataSourceUri())
+    if dataset is None:
+        raise ValueError(_tr("Failed to read the image."))
+    bands = [1] if dataset.RasterCount == 2 else range(1, dataset.RasterCount + 1)
+    power = [
+        dataset.GetRasterBand(i)
+        .ReadAsArray(col0, row0, width, height)
+        .astype(np.float64)
+        ** 2
+        for i in bands
+    ]
+    amplitude = np.sqrt(np.mean(power, axis=0)).astype(np.float32)
+    return ImageChip(amplitude, col0, row0, scene.geometry, scene.pixel_to_lonlat)
 
 
 def chip_around(
-    scene: MoverScene,
-    lon: float,
-    lat: float,
-    radius_m: float,
-    metadata_provider: MetadataProvider,
-) -> tuple[SlcChip, float, float]:
-    """Read the SLC chip within *radius_m* of a point; return it and the point's (row, col)."""
+    scene: MoverScene, lon: float, lat: float, radius_m: float
+) -> tuple[ImageChip, float, float]:
+    """Read the image chip within *radius_m* of a point; return it and the point's (row, col)."""
     dlat = radius_m / _METRES_PER_DEG
     dlon = dlat / max(math.cos(math.radians(lat)), 1e-6)
     extent = QgsRectangle(lon - dlon, lat - dlat, lon + dlon, lat + dlat)
@@ -236,24 +219,9 @@ def chip_around(
         extent = QgsCoordinateTransform(
             QgsCoordinateReferenceSystem(WGS84), layer_crs, QgsProject.instance()
         ).transformBoundingBox(extent)
-    chip = read_slc_chip(scene.layer, extent, metadata_provider)
+    chip = read_image_chip(scene, extent)
     col, row = scene.lonlat_to_pixel(lon, lat)
     return chip, row - chip.row0 - 0.5, col - chip.col0 - 0.5
-
-
-def target_from_click(
-    scene: MoverScene,
-    lon: float,
-    lat: float,
-    metadata_provider: MetadataProvider,
-) -> ImagedTarget:
-    """Return the imaged target at a click: the hull centroid nearby, or the click itself."""
-    params = HullParameters()
-    radius = (
-        params.corridor_half_width_m + params.ring_gap_m + params.ring_width_m + 5.0
-    )
-    chip, row, col = chip_around(scene, lon, lat, radius, metadata_provider)
-    return locate_imaged_target(chip, row, col, scene.display_height, params)
 
 
 class MoverRelocationMapTool(QgsMapTool):
@@ -396,7 +364,7 @@ class OutputLayers:
 
     Layers are found by OUTPUT_PROPERTY, so layers from an earlier panel instance
     are reused and cleaned up too. QGIS makes each added layer the active one, so
-    the previously active layer (the SLC) is restored after adding.
+    the previously active layer (the image) is restored after adding.
     """
 
     def __init__(self, iface) -> None:
@@ -699,7 +667,7 @@ class MoverRelocationDialog(QDialog):
                 "one on each side of the band ({n}/2)."
             ).format(n=len(self.clicks))
         prompts = {
-            STEP_IDLE: _tr("Select an ICEYE SLC layer, then Pick target."),
+            STEP_IDLE: _tr("Select an ICEYE layer, then Pick target."),
             STEP_TARGET: _tr("Step 1: click the imaged (displaced) target."),
             STEP_CONSTRAINT: constraint
             + _tr(
@@ -716,9 +684,9 @@ class MoverRelocationDialog(QDialog):
         if canvas.mapTool() is not self.map_tool:
             canvas.setMapTool(self.map_tool)
 
-    def _slc_layer(self, layer) -> QgsRasterLayer | None:
-        """*layer* if it is an SLC, else the SLC already in use if still loaded."""
-        if isinstance(layer, QgsRasterLayer) and layer.bandCount() >= 2:
+    def _image_layer(self, layer) -> QgsRasterLayer | None:
+        """*layer* if it is a raster, else the image already in use if still loaded."""
+        if isinstance(layer, QgsRasterLayer):
             return layer
         if self.scene is not None:
             current = QgsProject.instance().mapLayer(self.scene.layer_id)
@@ -727,10 +695,10 @@ class MoverRelocationDialog(QDialog):
         return None
 
     def _ensure_scene(self, layer) -> bool:
-        """Load the scene for *layer* (or the SLC in use) and keep it active."""
-        layer = self._slc_layer(layer)
+        """Load the scene for *layer* (or the image in use) and keep it active."""
+        layer = self._image_layer(layer)
         if layer is None:
-            self._step_label.setText(_tr("Select an ICEYE SLC layer first."))
+            self._step_label.setText(_tr("Select an ICEYE layer first."))
             return False
         if self.metadata_provider.get(layer) is None:
             self._step_label.setText(_tr("The active layer has no ICEYE metadata."))
@@ -739,8 +707,8 @@ class MoverRelocationDialog(QDialog):
             try:
                 self.scene = MoverScene.from_layer(layer)
             except Exception as e:
-                _log_warning(f"Mover Relocation could not read the SLC: {e}")
-                self._step_label.setText(_tr("Cannot read the SLC: {e}").format(e=e))
+                _log_warning(f"Mover Relocation could not read the layer: {e}")
+                self._step_label.setText(_tr("Cannot read the layer: {e}").format(e=e))
                 return False
         # The toolbar policy and this tool read the active layer.
         if self.iface.activeLayer() is not layer:
@@ -780,22 +748,11 @@ class MoverRelocationDialog(QDialog):
             if self.scene is None:
                 return
             self.reset()
-            QApplication.setOverrideCursor(Qt.CursorShape.WaitCursor)
-            try:
-                target = target_from_click(
-                    self.scene,
-                    point.x(),
-                    point.y(),
-                    self.metadata_provider,
-                )
-            except Exception as e:
-                _log_warning(f"Mover Relocation could not read the target: {e}")
-                self._step_label.setText(
-                    _tr("Could not read the target: {e}").format(e=e)
-                )
-                return
-            finally:
-                QApplication.restoreOverrideCursor()
+            target = ImagedTarget.from_ecef(
+                self.scene.geometry,
+                self.scene.ecef(point.x(), point.y()),
+                self.scene.display_height,
+            )
             self._use_target(target)
         elif self.step == STEP_CONSTRAINT:
             self.clicks.append(QgsPointXY(point))
@@ -933,7 +890,6 @@ class MoverRelocationDialog(QDialog):
                 click.x(),
                 click.y(),
                 settings.axis_radius_m + 10.0,
-                self.metadata_provider,
             )
             axis = estimate_constraint_axis(chip, row, col, settings)
         except Exception as e:

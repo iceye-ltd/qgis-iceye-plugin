@@ -38,8 +38,8 @@ from iceye_toolbox.core.mover_relocation import (
     relocate_single_click,
 )
 from iceye_toolbox.core.target_finder import (
+    ImageChip,
     ProductGeometry,
-    SlcChip,
     ecef_to_lonlat,
     enu_basis,
     gcp_pixel_to_lonlat,
@@ -287,8 +287,8 @@ class TestImageAxis:
         data = rng.standard_normal((rows, cols)) + 1j * rng.standard_normal(
             (rows, cols)
         )
-        chip = SlcChip(
-            data.astype(np.complex64),
+        chip = ImageChip(
+            np.abs(data).astype(np.float32),
             int(CENTRE_COL) - cols // 2,
             int(CENTRE_ROW) - rows // 2,
             geometry,

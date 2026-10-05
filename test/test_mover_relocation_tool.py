@@ -6,10 +6,16 @@ import math
 
 import numpy as np
 import pytest
-from qgis.core import Qgis, QgsMarkerLineSymbolLayer, QgsPointXY, QgsProject
+from qgis.core import (
+    Qgis,
+    QgsMarkerLineSymbolLayer,
+    QgsPointXY,
+    QgsProject,
+    QgsRasterLayer,
+)
 
 from iceye_toolbox.core.metadata import MetadataProvider
-from iceye_toolbox.core.mover_relocation import ConstraintAxis, ImagedTarget
+from iceye_toolbox.core.mover_relocation import ConstraintAxis
 from iceye_toolbox.core.target_finder import ecef_to_lonlat
 from iceye_toolbox.gui.mover_relocation_tool import (
     STEP_CONSTRAINT,
@@ -17,7 +23,6 @@ from iceye_toolbox.gui.mover_relocation_tool import (
     MoverRelocationDialog,
     MoverScene,
     OutputLayers,
-    target_from_click,
 )
 
 from .test_mover_relocation import _ground_velocity, simulate_mover
@@ -37,21 +42,8 @@ def slc_layer(qgis_iface, base_crop_layer):
 
 
 @pytest.fixture
-def dialog(qgis_iface, slc_layer, monkeypatch):
-    """Mover Relocation panel waiting for a target.
-
-    The simulated cars are not in the fixture image, so the target click is taken
-    as is instead of snapping to a hull.
-    """
-    import iceye_toolbox.gui.mover_relocation_tool as tool
-
-    monkeypatch.setattr(
-        tool,
-        "target_from_click",
-        lambda scene, lon, lat, _provider: ImagedTarget.from_ecef(
-            scene.geometry, scene.ecef(lon, lat), scene.display_height
-        ),
-    )
+def dialog(qgis_iface, slc_layer):
+    """Mover Relocation panel waiting for a target."""
     panel = MoverRelocationDialog(qgis_iface, metadata_provider=MetadataProvider())
     assert panel.start(), panel._step_label.text()
     yield panel
@@ -73,13 +65,29 @@ def _mover(scene: MoverScene, heading: float = 100.0, speed: float = 10.0):
     return mover, _point(p_img), lambda offset: _point(p0 + offset * u)
 
 
-def test_click_snaps_to_hull(slc_layer):
-    """A target click reads the SLC around it and snaps to a nearby hull."""
-    scene = MoverScene.from_layer(slc_layer)
-    assert scene.display_height == pytest.approx(-2.653, abs=1e-3)
-    lon, lat = scene.pixel_to_lonlat(CENTRE_COL, CENTRE_ROW)
-    target = target_from_click(scene, lon, lat, MetadataProvider())
-    assert np.linalg.norm(target.position - scene.ecef(lon, lat)) < 16.0
+def test_colour_image(qgis_iface):
+    """A three-band colour product without complex samples relocates as well."""
+    from .conftest import wwgtz2_fixture_tif
+
+    layer = QgsRasterLayer(str(wwgtz2_fixture_tif("COLOR")), "colour")
+    assert layer.isValid() and layer.bandCount() == 3
+    QgsProject.instance().addMapLayer(layer)
+    qgis_iface.setActiveLayer(layer)
+    panel = MoverRelocationDialog(qgis_iface, metadata_provider=MetadataProvider())
+    try:
+        assert panel.start(), panel._step_label.text()
+        assert panel.scene.display_height == pytest.approx(-2.653, abs=1e-3)
+        for single in (False, True):
+            panel.single_check.setChecked(single)
+            _, imaged, on_road = _mover(panel.scene)
+            panel.handle_click(imaged)
+            clicks = [on_road(0.0)] if single else [on_road(-60.0), on_road(60.0)]
+            for click in clicks:
+                panel.handle_click(click)
+            assert panel.step == STEP_DONE, panel._result.text()
+    finally:
+        panel.close()
+        QgsProject.instance().removeAllMapLayers()
 
 
 class TestMoverRelocationDialog:

@@ -1,7 +1,7 @@
-"""SLC geometry and target detection for moving-target relocation.
+"""SAR image geometry for moving-target relocation.
 
-Orbit fit, range-Doppler inverse and geocoding, SLC chips with GCP geolocation, and
-the click corridor, clutter ring and hull masks used by core.mover_relocation.
+Orbit fit, range-Doppler inverse and geocoding, GCP geolocation and image chips used
+by core.mover_relocation. Works on any ICEYE raster with orbit metadata and GCPs.
 """
 
 from __future__ import annotations
@@ -22,22 +22,6 @@ from .typing_compat import NDArray
 
 _WGS84_A = 6378137.0
 _WGS84_B = 6356752.314245
-
-
-# ----------------------------------------------------------------------------------
-# Parameters
-# ----------------------------------------------------------------------------------
-
-
-@dataclass
-class HullParameters:
-    """Hull detection settings (distances in ground metres)."""
-
-    corridor_half_width_m: float = 15.0
-    ring_gap_m: float = 10.0
-    ring_width_m: float = 30.0
-    hull_snr_db: float = 10.0
-    hull_dynamic_range_db: float = 25.0
 
 
 # ----------------------------------------------------------------------------------
@@ -225,7 +209,7 @@ def read_iceye_properties(source_path: str) -> dict[str, Any]:
 
 
 # ----------------------------------------------------------------------------------
-# SLC chip
+# Image chip
 # ----------------------------------------------------------------------------------
 
 
@@ -278,23 +262,15 @@ def gcp_mean_height(source_path: str, default: float = 0.0) -> float:
     return float(np.mean(heights)) if heights else default
 
 
-def patch_to_file_layout(
-    data_patch: NDArray[np.complexfloating[Any]], left: bool
-) -> NDArray[np.complexfloating[Any]]:
-    """Undo ``core.raster.toggle_shadows_down``: back to file rows / columns."""
-    data = data_patch.T
-    return np.fliplr(data) if left else data
-
-
 @dataclass
-class SlcChip:
-    """Complex SLC window in file layout (rows = range samples, cols = azimuth lines).
+class ImageChip:
+    """Amplitude window of an image in file layout (rows = range, cols = azimuth).
 
     ``col0`` / ``row0`` is the window origin in file pixels; ``pixel_to_lonlat`` maps
     file pixel coordinates (pixel centres at +0.5) to lon/lat.
     """
 
-    data: NDArray[np.complex64]
+    data: NDArray[np.float32]
     col0: int
     row0: int
     geometry: ProductGeometry
@@ -324,88 +300,3 @@ class SlcChip:
         step_row = basis @ (self.ecef(row + dr, col) - p0) / dr
         step_col = basis @ (self.ecef(row, col + dc) - p0) / dc
         return np.array([step_row[:2], step_col[:2]])
-
-
-# ----------------------------------------------------------------------------------
-# Click masks
-# ----------------------------------------------------------------------------------
-
-
-def ellipse_mask(
-    shape: tuple[int, int],
-    row: float,
-    col: float,
-    half_rows: float,
-    half_cols: float,
-) -> NDArray[np.bool_]:
-    """Return the pixels within an elliptical (half_rows, half_cols) distance of a point."""
-    rr = (np.arange(shape[0])[:, None] - row) / max(half_rows, 0.5)
-    cc = (np.arange(shape[1])[None, :] - col) / max(half_cols, 0.5)
-    return rr**2 + cc**2 <= 1.0
-
-
-@dataclass
-class ClickMasks:
-    """Corridor disc and clutter ring around a click, with the sub-window they cover."""
-
-    corridor: NDArray[np.bool_]
-    ring: NDArray[np.bool_]
-    window: tuple[slice, slice]
-
-
-def build_click_masks(
-    chip: SlcChip,
-    row: float,
-    col: float,
-    params: HullParameters,
-    row_spacing_m: float,
-    col_spacing_m: float,
-) -> ClickMasks:
-    """Build the corridor and ring masks around chip pixel (row, col).
-
-    The corridor is corridor_half_width_m of ground around the click; the ring lies
-    ring_gap_m beyond it and is ring_width_m wide.
-    """
-    outer = params.corridor_half_width_m + params.ring_gap_m + params.ring_width_m
-    margin_r = int(math.ceil(outer / row_spacing_m)) + 1
-    margin_c = int(math.ceil(outer / col_spacing_m)) + 1
-    r_lo = max(int(math.floor(row)) - margin_r, 0)
-    r_hi = min(int(math.ceil(row)) + margin_r + 1, chip.shape[0])
-    c_lo = max(int(math.floor(col)) - margin_c, 0)
-    c_hi = min(int(math.ceil(col)) + margin_c + 1, chip.shape[1])
-    shape = (r_hi - r_lo, c_hi - c_lo)
-
-    def disc(half_m: float) -> NDArray[np.bool_]:
-        return ellipse_mask(
-            shape,
-            row - r_lo,
-            col - c_lo,
-            half_m / row_spacing_m,
-            half_m / col_spacing_m,
-        )
-
-    inner = disc(params.corridor_half_width_m)
-    ring = disc(outer) & ~disc(params.corridor_half_width_m + params.ring_gap_m)
-    return ClickMasks(inner, ring, (slice(r_lo, r_hi), slice(c_lo, c_hi)))
-
-
-def hull_mask(
-    intensity: NDArray[np.floating[Any]],
-    corridor: NDArray[np.bool_],
-    ring: NDArray[np.bool_],
-    params: HullParameters,
-) -> NDArray[np.bool_]:
-    """Return the bright hull pixels in the corridor.
-
-    Pixels must exceed both the ring clutter by hull_snr_db and the corridor peak
-    minus hull_dynamic_range_db, which drops most sidelobe energy.
-    """
-    ring_values = intensity[ring] if ring.any() else intensity[corridor]
-    clutter = float(np.median(ring_values)) if ring_values.size else 0.0
-    inside = intensity[corridor]
-    peak = float(inside.max()) if inside.size else 0.0
-    threshold = max(
-        clutter * 10.0 ** (params.hull_snr_db / 10.0),
-        peak * 10.0 ** (-params.hull_dynamic_range_db / 10.0),
-    )
-    return corridor & (intensity > threshold)

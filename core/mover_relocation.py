@@ -1,4 +1,4 @@
-"""Moving-target relocation for ICEYE Spotlight / Dwell SLCs from in-image constraints.
+"""Moving-target relocation in ICEYE SAR images from in-image constraints.
 
 A mover is imaged on its own range line, displaced along track by
 dt = t_img - t_true = R * v_r / V_eff^2 (v_r positive towards the radar). The true
@@ -16,14 +16,11 @@ from typing import Any
 import numpy as np
 
 from .target_finder import (
-    HullParameters,
+    ImageChip,
     PixelToLonLat,
     ProductGeometry,
-    SlcChip,
-    build_click_masks,
     ecef_to_lonlat,
     enu_basis,
-    hull_mask,
     lonlat_to_ecef,
 )
 from .typing_compat import NDArray
@@ -198,58 +195,6 @@ class ImagedTarget:
     def lonlat(self) -> tuple[float, float]:
         """Imaged position (lon, lat)."""
         return ecef_to_lonlat(self.position)
-
-
-def locate_imaged_target(
-    chip: SlcChip,
-    row: float,
-    col: float,
-    height: float,
-    params: HullParameters | None = None,
-) -> ImagedTarget:
-    """Find the intensity-weighted hull centroid around a click in an SLC chip.
-
-    Parameters
-    ----------
-    chip : SlcChip
-        SLC window around the click.
-    row, col : float
-        Click position in chip pixels.
-    height : float
-        Display surface height (m).
-    params : HullParameters or None
-        Corridor and hull thresholds.
-
-    Returns
-    -------
-    ImagedTarget
-        Hull centroid, with half the hull's ground-range extent as half_extent_m.
-        Without a hull the click itself is returned.
-    """
-    params = params or HullParameters()
-    steps = chip.pixel_enu_steps(row, col)
-    row_m, col_m = (float(np.linalg.norm(s)) for s in steps)
-    masks = build_click_masks(chip, row, col, params, row_m, col_m)
-    intensity = np.abs(chip.data[masks.window]) ** 2
-    hull = hull_mask(intensity, masks.corridor, masks.ring, params)
-    rr, cc = np.nonzero(hull)
-    if rr.size == 0:
-        lon, lat = chip.lonlat(row, col)
-        return ImagedTarget.from_ecef(
-            chip.geometry, lonlat_to_ecef(lon, lat, height), height
-        )
-
-    w = intensity[rr, cc]
-    hull_row = float(np.sum(rr * w) / np.sum(w)) + masks.window[0].start
-    hull_col = float(np.sum(cc * w) / np.sum(w)) + masks.window[1].start
-    lon, lat = chip.lonlat(hull_row, hull_col)
-    target = ImagedTarget.from_ecef(
-        chip.geometry, lonlat_to_ecef(lon, lat, height), height
-    )
-    g_hat = local_geometry(chip.geometry, target.time, target.position).ground_range_dir
-    across = rr * float(steps[0] @ g_hat) + cc * float(steps[1] @ g_hat)
-    target.half_extent_m = 0.5 * float(np.ptp(across))
-    return target
 
 
 @dataclass
@@ -866,7 +811,7 @@ class ConstraintAxis:
 
 
 def estimate_constraint_axis(
-    chip: SlcChip,
+    chip: ImageChip,
     row: float,
     col: float,
     settings: RelocationSettings | None = None,
@@ -881,8 +826,8 @@ def estimate_constraint_axis(
 
     Parameters
     ----------
-    chip : SlcChip
-        SLC window around the click.
+    chip : ImageChip
+        Image window around the click.
     row, col : float
         Click position in chip pixels.
     settings : RelocationSettings or None
