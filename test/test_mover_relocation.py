@@ -23,7 +23,6 @@ from iceye_toolbox.core.mover_relocation import (
     FLAG_IMPLAUSIBLE_SPEED,
     FLAG_OUTSIDE_BAND,
     FLAG_PROBABLY_STATIONARY,
-    FLAG_V_A_INCONSISTENT,
     INDICATOR_AMBER,
     INDICATOR_GREEN,
     INDICATOR_RED,
@@ -48,7 +47,7 @@ from iceye_toolbox.core.mover_relocation import (
 from iceye_toolbox.core.target_finder import (
     ProductGeometry,
     SlcChip,
-    ecef_to_geodetic,
+    ecef_to_lonlat,
     enu_basis,
     gcp_pixel_to_lonlat,
     lonlat_to_ecef,
@@ -95,7 +94,7 @@ def scene_point(geometry, pixel_to_lonlat) -> np.ndarray:
 
 
 def _on_surface(point: np.ndarray, height: float) -> np.ndarray:
-    lat, lon, _ = ecef_to_geodetic(point)
+    lon, lat = ecef_to_lonlat(point)
     return lonlat_to_ecef(lon, lat, height)
 
 
@@ -113,7 +112,7 @@ def _mirrored_point(geometry: ProductGeometry, point: np.ndarray) -> np.ndarray:
 
 def _ground_velocity(point: np.ndarray, speed: float, heading_deg: float) -> np.ndarray:
     """ECEF velocity of a horizontal motion with compass heading heading_deg."""
-    lat, lon, _ = ecef_to_geodetic(point)
+    lon, lat = ecef_to_lonlat(point)
     basis = enu_basis(lon, lat)
     h = math.radians(heading_deg)
     return speed * (math.sin(h) * basis[0] + math.cos(h) * basis[1])
@@ -190,7 +189,7 @@ def _road(
 
 
 def _expected_heading(point: np.ndarray, velocity: np.ndarray) -> float:
-    lat, lon, _ = ecef_to_geodetic(point)
+    lon, lat = ecef_to_lonlat(point)
     en = enu_basis(lon, lat)[:2] @ velocity
     return math.degrees(math.atan2(en[0], en[1])) % 360.0
 
@@ -380,13 +379,14 @@ class TestBand:
         assert all(limits[0] <= t.t <= limits[1] for t in band.ticks)
         assert any(t.v_r < 0 for t in band.ticks)
 
-    def test_image_time_limits_on_fixture(self, geometry, pixel_to_lonlat):
+    def test_image_time_limits_on_fixture(self, geometry, pixel_to_lonlat, crop_path):
         """The crop fixture spans ~0.05 s of zero-Doppler time (8542 columns)."""
         lo, hi = image_time_limits(
             geometry, pixel_to_lonlat, 8542, CENTRE_ROW, geometry.scene_height
         )
         # The GCP model spans ~1.3 % more time than 1 / processing_prf per column.
-        assert hi - lo == pytest.approx(8541 * geometry.azimuth_time_spacing, rel=0.02)
+        spacing = 1.0 / read_iceye_properties(crop_path)["iceye:processing_prf"]
+        assert hi - lo == pytest.approx(8541 * spacing, rel=0.02)
 
     def test_cursor_readout(self, geometry, scene_point):
         """Inside the band the readout converts zero-Doppler offset to |v_r|."""
@@ -744,22 +744,3 @@ class TestPlausibility:
             settings=RelocationSettings(),
         )
         assert FLAG_OUTSIDE_BAND in flags and indicator == INDICATOR_RED
-
-    def test_v_a_check_is_off_by_default(self):
-        """The along-track check only runs when enabled."""
-        common = dict(
-            dx_m=10.0,
-            dx_max_m=100.0,
-            v_t=5.0,
-            target_class=TARGET_CLASSES["ship"],
-            constraint_track_angle_deg=60.0,
-            band_clipped=False,
-            v_a_measured=(-2.0, 0.2),
-            v_a_predicted=2.0,
-        )
-        flags, _ = plausibility(settings=RelocationSettings(), **common)
-        assert FLAG_V_A_INCONSISTENT not in flags
-        flags, indicator = plausibility(
-            settings=RelocationSettings(v_a_check=True), **common
-        )
-        assert FLAG_V_A_INCONSISTENT in flags and indicator == INDICATOR_RED

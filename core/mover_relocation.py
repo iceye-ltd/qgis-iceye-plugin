@@ -3,13 +3,12 @@
 A mover is imaged on its own range line, displaced along track by
 dt = t_img - t_true = R * v_r / V_eff^2 (v_r positive towards the radar). The true
 position along that line comes from a road, rail, bridge deck or wake the user
-clicks. The maths is documented in help/sar-mover-relocator-maths.md.
+clicks.
 """
 
 from __future__ import annotations
 
 import math
-from collections.abc import Sequence
 from dataclasses import dataclass
 from datetime import timedelta
 from typing import Any
@@ -17,13 +16,12 @@ from typing import Any
 import numpy as np
 
 from .target_finder import (
+    HullParameters,
     PixelToLonLat,
     ProductGeometry,
-    RelocationParameters,
     SlcChip,
-    build_curve_masks,
-    curve_pixels,
-    ecef_to_geodetic,
+    build_click_masks,
+    ecef_to_lonlat,
     enu_basis,
     hull_and_clutter_masks,
     lonlat_to_ecef,
@@ -41,7 +39,6 @@ FLAG_OUTSIDE_BAND = "outside_band"
 FLAG_IMPLAUSIBLE_SPEED = "implausible_speed"
 FLAG_PROBABLY_STATIONARY = "probably_stationary"
 FLAG_CONSTRAINT_PARALLEL = "constraint_parallel_to_track"
-FLAG_V_A_INCONSISTENT = "v_a_inconsistent"
 FLAG_BAND_CLIPPED = "band_clipped"
 FLAG_HEADING_UNKNOWN = "heading_unknown"
 FLAG_HEADING_ESTIMATED = "heading_estimated"
@@ -97,9 +94,6 @@ class RelocationSettings:
     # Speckle gives ~0.1, clean roads and wakes ~0.8-0.9.
     min_axis_coherence: float = 0.5
     axis_half_length_m: float = 40.0
-    # Off until the map-drift v_a sign is validated.
-    v_a_check: bool = False
-    v_a_k_sigma: float = 3.0
 
 
 class ConstraintError(ValueError):
@@ -142,8 +136,7 @@ def local_geometry(
     LocalGeometry
     """
     kin = geometry.kinematics(t, point)
-    lat, lon, _ = ecef_to_geodetic(point)
-    enu = enu_basis(lon, lat)
+    enu = enu_basis(*ecef_to_lonlat(point))
     away = enu @ (point - kin.sat_position)
     vel = enu @ kin.sat_velocity
     cos_inc = -away[2] / float(np.linalg.norm(away))
@@ -156,12 +149,6 @@ def local_geometry(
         along_track_dir=vel[:2] / np.linalg.norm(vel[:2]),
         enu=enu,
     )
-
-
-def _lonlat(point: NDArray[np.float64]) -> tuple[float, float]:
-    """(lon, lat) of an ECEF point."""
-    lat, lon, _ = ecef_to_geodetic(point)
-    return lon, lat
 
 
 def _heading_deg(en: NDArray[np.float64]) -> float:
@@ -206,14 +193,15 @@ class ImagedTarget:
     @property
     def lonlat(self) -> tuple[float, float]:
         """Imaged position (lon, lat)."""
-        return _lonlat(self.position)
+        return ecef_to_lonlat(self.position)
 
 
 def locate_imaged_target(
     chip: SlcChip,
-    control_points: Sequence[Any],
+    row: float,
+    col: float,
     height: float,
-    params: RelocationParameters | None = None,
+    params: HullParameters | None = None,
 ) -> ImagedTarget:
     """Find the intensity-weighted hull centroid around a click in an SLC chip.
 
@@ -221,38 +209,36 @@ def locate_imaged_target(
     ----------
     chip : SlcChip
         SLC window around the click.
-    control_points : sequence
-        Four (x, y) Bezier points as 0..1 chip fractions; for a click pass the click
-        fraction four times, which makes the corridor a disc.
+    row, col : float
+        Click position in chip pixels.
     height : float
         Display surface height (m).
-    params : RelocationParameters or None
+    params : HullParameters or None
         Corridor and hull thresholds.
 
     Returns
     -------
     ImagedTarget
         Hull centroid, with half the hull's ground-range extent as half_extent_m.
+        Without a hull the click itself is returned.
     """
-    params = params or RelocationParameters()
-    rows, cols = curve_pixels(control_points, chip.shape)
-    mid = len(rows) // 2
-    steps = chip.pixel_enu_steps(float(rows[mid]), float(cols[mid]))
+    params = params or HullParameters()
+    steps = chip.pixel_enu_steps(row, col)
     row_m, col_m = (float(np.linalg.norm(s)) for s in steps)
-    masks = build_curve_masks(chip, control_points, params, row_m, col_m)
+    masks = build_click_masks(chip, row, col, params, row_m, col_m)
     intensity = np.abs(chip.data[masks.window]) ** 2
     hull, _, _ = hull_and_clutter_masks(intensity, masks.corridor, masks.ring, params)
     rr, cc = np.nonzero(hull)
     if rr.size == 0:
-        lon, lat = chip.lonlat(float(rows[mid]), float(cols[mid]))
+        lon, lat = chip.lonlat(row, col)
         return ImagedTarget.from_ecef(
             chip.geometry, lonlat_to_ecef(lon, lat, height), height
         )
 
     w = intensity[rr, cc]
-    row = float(np.sum(rr * w) / np.sum(w)) + masks.window[0].start
-    col = float(np.sum(cc * w) / np.sum(w)) + masks.window[1].start
-    lon, lat = chip.lonlat(row, col)
+    hull_row = float(np.sum(rr * w) / np.sum(w)) + masks.window[0].start
+    hull_col = float(np.sum(cc * w) / np.sum(w)) + masks.window[1].start
+    lon, lat = chip.lonlat(hull_row, hull_col)
     target = ImagedTarget.from_ecef(
         chip.geometry, lonlat_to_ecef(lon, lat, height), height
     )
@@ -354,7 +340,7 @@ def band_for_target(
         points, guess = [], target.position
         for t in times:
             guess = orbit.geocode(slant, t, h, guess)
-            points.append(_lonlat(guess))
+            points.append(ecef_to_lonlat(guess))
         return points
 
     ticks = []
@@ -372,7 +358,7 @@ def band_for_target(
                 BandTick(
                     v_r=v_r,
                     t=t,
-                    lonlat=_lonlat(p),
+                    lonlat=ecef_to_lonlat(p),
                     v_ground_min=v_ground_min,
                     label=f"{v:.0f} m/s (>= {v_ground_min:.0f} m/s ground)",
                 )
@@ -444,8 +430,7 @@ def _segment_point(
     a: NDArray[np.float64], b: NDArray[np.float64], s: float, height: float
 ) -> NDArray[np.float64]:
     """Point at fraction *s* of the straight segment A-B on the height surface."""
-    lat, lon, _ = ecef_to_geodetic(a + s * (b - a))
-    return lonlat_to_ecef(lon, lat, height)
+    return lonlat_to_ecef(*ecef_to_lonlat(a + s * (b - a)), height)
 
 
 def intersect_constraint(
@@ -524,8 +509,6 @@ def plausibility(
     constraint_track_angle_deg: float | None,
     band_clipped: bool,
     settings: RelocationSettings,
-    v_a_measured: tuple[float, float] | None = None,
-    v_a_predicted: float | None = None,
 ) -> tuple[list[str], str]:
     """Run the plausibility checks and pick the traffic light.
 
@@ -544,10 +527,6 @@ def plausibility(
         Whether the band was clipped by the image extent.
     settings : RelocationSettings
         Thresholds.
-    v_a_measured : tuple of float or None
-        (v_a, sigma) from map drift, used only when settings.v_a_check is on.
-    v_a_predicted : float or None
-        Along-track velocity implied by the relocation.
 
     Returns
     -------
@@ -565,11 +544,6 @@ def plausibility(
         flags.append(FLAG_HEADING_UNKNOWN)
     elif constraint_track_angle_deg <= settings.min_constraint_track_angle_deg:
         flags.append(FLAG_CONSTRAINT_PARALLEL)
-    if settings.v_a_check and v_a_measured is not None and v_a_predicted is not None:
-        v_a, sigma = v_a_measured
-        same_sign = v_a * v_a_predicted >= 0
-        if not same_sign or abs(v_a - v_a_predicted) > settings.v_a_k_sigma * sigma:
-            flags.append(FLAG_V_A_INCONSISTENT)
     if band_clipped:
         flags.append(FLAG_BAND_CLIPPED)
     if not flags:
@@ -615,7 +589,7 @@ class Relocation:
     @property
     def true_lonlat(self) -> tuple[float, float]:
         """True position (lon, lat)."""
-        return _lonlat(self.p_true)
+        return ecef_to_lonlat(self.p_true)
 
     def attributes(self) -> dict[str, Any]:
         """Flat attribute dict for the true position layer."""
@@ -677,7 +651,6 @@ def relocate(
     settings: RelocationSettings | None = None,
     band: Band | None = None,
     target_height: float | None = None,
-    v_a_measured: tuple[float, float] | None = None,
 ) -> Relocation:
     """Relocate a target from two clicks along its road, rail, deck or wake.
 
@@ -700,8 +673,6 @@ def relocate(
         Band of *target* (computed when not given).
     target_height : float or None
         Surface to geocode the true position on (default: the display surface).
-    v_a_measured : tuple of float or None
-        (v_a, sigma) from map drift for the optional v_a check.
 
     Returns
     -------
@@ -753,15 +724,13 @@ def relocate(
         constraint_track_angle_deg=track_angle,
         band_clipped=band.clipped,
         settings=settings,
-        v_a_measured=v_a_measured,
-        v_a_predicted=v_t * float(u_dir @ local.along_track_dir),
     )
 
     track: list[tuple[float, float]] = []
     if geometry.acquisition_window is not None:
         velocity = v_t * (u_dir[0] * local.enu[0] + u_dir[1] * local.enu[1])
         track = [
-            _lonlat(p_true + velocity * (t - t_true))
+            ecef_to_lonlat(p_true + velocity * (t - t_true))
             for t in geometry.acquisition_window
         ]
 
@@ -785,7 +754,7 @@ def relocate(
         sigma_v_t=sigma_v_r / (abs_cos_phi * local.sin_incidence),
         flags=flags,
         indicator=indicator,
-        constraint_lonlat=[_lonlat(a), _lonlat(b)],
+        constraint_lonlat=[ecef_to_lonlat(a), ecef_to_lonlat(b)],
         track_lonlat=track,
     )
 
@@ -880,7 +849,7 @@ def relocate_single_click(
         sigma_v_t=None,
         flags=flags,
         indicator=indicator,
-        constraint_lonlat=[_lonlat(c)],
+        constraint_lonlat=[ecef_to_lonlat(c)],
         track_lonlat=[],
         mode=MODE_SINGLE_CLICK,
     )
@@ -999,13 +968,13 @@ def relocate_from_axis(
     """
     settings = settings or RelocationSettings()
     c = np.asarray(point, np.float64)
-    lat, lon, _ = ecef_to_geodetic(c)
-    enu = enu_basis(lon, lat)
+    enu = enu_basis(*ecef_to_lonlat(c))
     step = settings.axis_half_length_m * (
         axis.direction_en[0] * enu[0] + axis.direction_en[1] * enu[1]
     )
     a, b = (
-        lonlat_to_ecef(*_lonlat(c + sign * step), target.height) for sign in (-1, 1)
+        lonlat_to_ecef(*ecef_to_lonlat(c + sign * step), target.height)
+        for sign in (-1, 1)
     )
     result = relocate(
         geometry,

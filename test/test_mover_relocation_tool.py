@@ -20,7 +20,7 @@ from iceye_toolbox.core.mover_relocation import (
     INDICATOR_AMBER,
     ConstraintAxis,
 )
-from iceye_toolbox.core.target_finder import ecef_to_geodetic, lonlat_to_ecef
+from iceye_toolbox.core.target_finder import ecef_to_lonlat, lonlat_to_ecef
 from iceye_toolbox.gui.mover_relocation_tool import (
     STEP_CONSTRAINT,
     STEP_DONE,
@@ -60,7 +60,7 @@ def slc_layer(qgis_iface, base_crop_layer):
 
 
 def _lonlat_point(point: np.ndarray) -> QgsPointXY:
-    lat, lon, _ = ecef_to_geodetic(point)
+    lon, lat = ecef_to_lonlat(point)
     return QgsPointXY(lon, lat)
 
 

@@ -68,8 +68,8 @@ from ..core.mover_relocation import (
     relocate_single_click,
 )
 from ..core.target_finder import (
+    HullParameters,
     ProductGeometry,
-    RelocationParameters,
     SlcChip,
     gcp_lonlat_to_pixel,
     gcp_mean_height,
@@ -252,17 +252,12 @@ def target_from_click(
     geometry, h = scene.geometry, scene.display_height
     if not detect_hull:
         return ImagedTarget.from_ecef(geometry, scene.ecef(lon, lat), h)
-    params = RelocationParameters()
+    params = HullParameters()
     radius = (
         params.corridor_half_width_m + params.ring_gap_m + params.ring_width_m + 5.0
     )
     chip, row, col = chip_around(scene, lon, lat, radius, metadata_provider)
-    rows, cols = chip.shape
-    fraction = (
-        min(max(col / max(cols - 1, 1), 0.0), 1.0),
-        min(max(row / max(rows - 1, 1), 0.0), 1.0),
-    )
-    return locate_imaged_target(chip, [fraction] * 4, h, params)
+    return locate_imaged_target(chip, row, col, h, params)
 
 
 class MoverRelocationMapTool(QgsMapTool):
