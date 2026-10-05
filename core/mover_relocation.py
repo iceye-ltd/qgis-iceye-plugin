@@ -9,7 +9,7 @@ clicks.
 from __future__ import annotations
 
 import math
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import timedelta
 from typing import Any
 
@@ -23,7 +23,7 @@ from .target_finder import (
     build_click_masks,
     ecef_to_lonlat,
     enu_basis,
-    hull_and_clutter_masks,
+    hull_mask,
     lonlat_to_ecef,
 )
 from .typing_compat import NDArray
@@ -90,7 +90,6 @@ class RelocationSettings:
     sigma_centroid_m: float = 2.0
     sigma_click_m: float = 2.0
     constraint_width_m: float = 10.0
-    range_residual: bool = False
     allow_extrapolation: bool = False
     axis_radius_m: float = 50.0
     axis_cell_m: float = 2.0
@@ -138,15 +137,18 @@ def local_geometry(
     -------
     LocalGeometry
     """
-    kin = geometry.kinematics(t, point)
+    s = geometry.orbit.position(t)
+    v = geometry.orbit.velocity(t)
+    d = point - s
     enu = enu_basis(*ecef_to_lonlat(point))
-    away = enu @ (point - kin.sat_position)
-    vel = enu @ kin.sat_velocity
+    away = enu @ d
+    vel = enu @ v
     cos_inc = -away[2] / float(np.linalg.norm(away))
     return LocalGeometry(
-        slant_range=kin.slant_range,
-        v_eff2=kin.v_eff**2,
-        v_ground=kin.v_ground,
+        slant_range=float(np.linalg.norm(d)),
+        # Exact second derivative of the range history in the Earth-fixed frame.
+        v_eff2=float(v @ v - geometry.orbit.acceleration(t) @ d),
+        v_ground=float(np.linalg.norm(v) * np.linalg.norm(point) / np.linalg.norm(s)),
         sin_incidence=math.sqrt(max(0.0, 1.0 - cos_inc**2)),
         ground_range_dir=away[:2] / np.linalg.norm(away[:2]),
         along_track_dir=vel[:2] / np.linalg.norm(vel[:2]),
@@ -229,7 +231,7 @@ def locate_imaged_target(
     row_m, col_m = (float(np.linalg.norm(s)) for s in steps)
     masks = build_click_masks(chip, row, col, params, row_m, col_m)
     intensity = np.abs(chip.data[masks.window]) ** 2
-    hull, _, _ = hull_and_clutter_masks(intensity, masks.corridor, masks.ring, params)
+    hull = hull_mask(intensity, masks.corridor, masks.ring, params)
     rr, cc = np.nonzero(hull)
     if rr.size == 0:
         lon, lat = chip.lonlat(row, col)
@@ -399,29 +401,21 @@ def image_time_limits(
     return min(times), max(times)
 
 
-@dataclass
-class CursorReadout:
-    """Radial velocity a band position would imply."""
-
-    v_r_abs: float
-    kmh: float
-    knots: float
-    dx_abs_m: float
-
-
 def cursor_readout(
     geometry: ProductGeometry,
     target: ImagedTarget,
     band: Band,
     point: NDArray[np.float64],
-) -> CursorReadout | None:
-    """Return |v_r| = V_eff^2 |t_img - t_c| / R_img if *point* lies inside the band."""
+) -> tuple[float, float] | None:
+    """Return (|v_r|, |dx|) a band position implies, or None outside the band.
+
+    |v_r| = V_eff^2 |t_img - t_c| / R_img and |dx| = V_g |t_img - t_c|.
+    """
     t_c, r_c = geometry.orbit.zero_doppler(np.asarray(point, np.float64), target.time)
     if abs(r_c - target.slant_range) > band.half_width_slant_m:
         return None
     dt = abs(target.time - t_c)
-    v = band.v_eff2 * dt / target.slant_range
-    return CursorReadout(v, v * MPS_TO_KMH, v * MPS_TO_KNOTS, band.v_ground * dt)
+    return band.v_eff2 * dt / target.slant_range, band.v_ground * dt
 
 
 def _segment_point(
@@ -555,8 +549,8 @@ def plausibility(
 class Relocation:
     """True position and motion of a relocated target; v_r > 0 towards the radar.
 
-    In single-click mode without an image axis, v_t, heading_deg, phi_deg,
-    constraint_track_angle_deg and sigma_v_t are None; only v_t_min is known.
+    Without a constraint direction (single click, no image axis) v_t, heading_deg,
+    phi_deg and constraint_track_angle_deg stay None; only v_t_min is known.
     """
 
     target: ImagedTarget
@@ -565,24 +559,39 @@ class Relocation:
     t_true_utc: str
     p_true: NDArray[np.float64]
     v_r: float
-    v_gr: float
     dx_m: float
-    v_t: float | None
-    v_t_min: float
-    heading_deg: float | None
-    phi_deg: float | None
-    constraint_track_angle_deg: float | None
+    sin_incidence: float
     constraint_width_m: float
     sigma_dx_m: float
     sigma_v_r: float
-    sigma_v_t: float | None
     flags: list[str]
     indicator: str
-    constraint_lonlat: list[tuple[float, float]]
-    track_lonlat: list[tuple[float, float]]
+    v_t: float | None = None
+    heading_deg: float | None = None
+    phi_deg: float | None = None
+    constraint_track_angle_deg: float | None = None
+    constraint_lonlat: list[tuple[float, float]] = field(default_factory=list)
+    track_lonlat: list[tuple[float, float]] = field(default_factory=list)
     mode: str = MODE_TWO_CLICK
     axis_coherence: float | None = None
     sign_validated: bool = SIGN_VALIDATED
+
+    @property
+    def v_gr(self) -> float:
+        """Ground-range velocity v_r / sin(theta_inc)."""
+        return self.v_r / self.sin_incidence
+
+    @property
+    def v_t_min(self) -> float:
+        """Minimum ground speed |v_r| / sin(theta_inc), exact for motion in range."""
+        return abs(self.v_gr)
+
+    @property
+    def sigma_v_t(self) -> float | None:
+        """Ground speed uncertainty, scaled from sigma_v_r like v_t from v_r."""
+        if self.v_t is None or self.v_r == 0:
+            return None
+        return self.sigma_v_r * self.v_t / abs(self.v_r)
 
     @property
     def radial_motion(self) -> str:
@@ -632,18 +641,56 @@ def _range_with_residual(
     return target.slant_range + target.slant_range * v_r**2 / (2.0 * local.v_eff2)
 
 
-def _sigma_dx(settings: RelocationSettings, sin_track: float = 1.0) -> float:
-    """Along-track uncertainty: centroid, click and constraint width across the track."""
+def _relocation(
+    geometry: ProductGeometry,
+    target: ImagedTarget,
+    target_class: TargetClass,
+    settings: RelocationSettings,
+    band: Band,
+    t_true: float,
+    p_true: NDArray[np.float64],
+    sin_track: float = 1.0,
+    **direction: Any,
+) -> Relocation:
+    """Build a relocation: v_r, displacement, uncertainty and plausibility checks.
+
+    *direction* holds the fields only known with a constraint direction (v_t,
+    heading_deg, angles, track) plus mode and constraint_lonlat.
+    """
+    local = local_geometry(geometry, t_true, p_true)
+    dt = target.time - t_true
+    v_r = local.v_eff2 * dt / target.slant_range
     width_term = settings.constraint_width_m / math.sqrt(12.0) / sin_track
-    return math.sqrt(
+    sigma_dx = math.sqrt(
         settings.sigma_centroid_m**2 + settings.sigma_click_m**2 + width_term**2
     )
-
-
-def _utc(geometry: ProductGeometry, t: float) -> str:
-    """ISO 8601 UTC time of a zero-Doppler time."""
-    epoch = geometry.reference_time + timedelta(seconds=t)
-    return epoch.isoformat().replace("+00:00", "Z")
+    v_t = direction.get("v_t")
+    flags, indicator = plausibility(
+        dx_m=local.v_ground * dt,
+        dx_max_m=band.dx_max_m,
+        v_t=abs(v_r) / local.sin_incidence if v_t is None else v_t,
+        target_class=target_class,
+        constraint_track_angle_deg=direction.get("constraint_track_angle_deg"),
+        band_clipped=band.clipped,
+        settings=settings,
+    )
+    epoch = geometry.reference_time + timedelta(seconds=t_true)
+    return Relocation(
+        target=target,
+        target_class=target_class,
+        t_true=t_true,
+        t_true_utc=epoch.isoformat().replace("+00:00", "Z"),
+        p_true=p_true,
+        v_r=v_r,
+        dx_m=local.v_ground * dt,
+        sin_incidence=local.sin_incidence,
+        constraint_width_m=settings.constraint_width_m,
+        sigma_dx_m=sigma_dx,
+        sigma_v_r=local.v_eff2 * sigma_dx / (local.v_ground * target.slant_range),
+        flags=flags,
+        indicator=indicator,
+        **direction,
+    )
 
 
 def relocate(
@@ -672,7 +719,7 @@ def relocate(
     target_class : TargetClass
         Sets the speed limit.
     settings : RelocationSettings or None
-        Uncertainty, residual and plausibility settings.
+        Uncertainty and plausibility settings.
     band : Band or None
         Band of *target* (computed when not given).
     target_height : float or None
@@ -694,41 +741,25 @@ def relocate(
     b = np.asarray(point_b, np.float64)
 
     t_true, _, p_cross = intersect_constraint(geometry, target, a, b, settings)
-    if settings.range_residual:
-        for _ in range(2):
-            r_true = _range_with_residual(geometry, target, t_true, p_cross)
-            t_true, _, p_cross = intersect_constraint(
-                geometry, target, a, b, settings, slant_range=r_true
-            )
+    # The true slant range is longer by R v_r^2 / (2 V_eff^2); two passes settle it.
+    for _ in range(2):
+        r_true = _range_with_residual(geometry, target, t_true, p_cross)
+        t_true, _, p_cross = intersect_constraint(
+            geometry, target, a, b, settings, slant_range=r_true
+        )
     _, r_true = geometry.orbit.zero_doppler(p_cross, t_true)
     p_true = geometry.orbit.geocode(r_true, t_true, h_target, p_cross)
 
     local = local_geometry(geometry, t_true, p_true)
-    dt = target.time - t_true
-    v_r = local.v_eff2 * dt / target.slant_range
-
+    v_r = local.v_eff2 * (target.time - t_true) / target.slant_range
     road = local.enu[:2] @ (b - a)
     u_road = road / np.linalg.norm(road)
     cos_phi = float(u_road @ local.ground_range_dir)
-    phi_deg = math.degrees(math.acos(max(-1.0, min(1.0, cos_phi))))
     cos_track = abs(float(u_road @ local.along_track_dir))
     track_angle = math.degrees(math.acos(min(1.0, cos_track)))
-    abs_cos_phi = max(abs(cos_phi), 1e-9)
-    v_t = abs(v_r) / (abs_cos_phi * local.sin_incidence)
+    v_t = abs(v_r) / (max(abs(cos_phi), 1e-9) * local.sin_incidence)
     towards = float(u_road @ -local.ground_range_dir)
     u_dir = u_road if towards * v_r >= 0 else -u_road
-
-    sigma_dx = _sigma_dx(settings, max(math.sin(math.radians(track_angle)), 1e-9))
-    sigma_v_r = local.v_eff2 * sigma_dx / (local.v_ground * target.slant_range)
-    flags, indicator = plausibility(
-        dx_m=local.v_ground * dt,
-        dx_max_m=band.dx_max_m,
-        v_t=v_t,
-        target_class=target_class,
-        constraint_track_angle_deg=track_angle,
-        band_clipped=band.clipped,
-        settings=settings,
-    )
 
     track: list[tuple[float, float]] = []
     if geometry.acquisition_window is not None:
@@ -738,26 +769,19 @@ def relocate(
             for t in geometry.acquisition_window
         ]
 
-    return Relocation(
-        target=target,
-        target_class=target_class,
-        t_true=t_true,
-        t_true_utc=_utc(geometry, t_true),
-        p_true=p_true,
-        v_r=v_r,
-        v_gr=v_r / local.sin_incidence,
-        dx_m=local.v_ground * dt,
+    return _relocation(
+        geometry,
+        target,
+        target_class,
+        settings,
+        band,
+        t_true,
+        p_true,
+        sin_track=max(math.sin(math.radians(track_angle)), 1e-9),
         v_t=v_t,
-        v_t_min=abs(v_r) / local.sin_incidence,
         heading_deg=_heading_deg(u_dir),
-        phi_deg=phi_deg,
+        phi_deg=math.degrees(math.acos(max(-1.0, min(1.0, cos_phi)))),
         constraint_track_angle_deg=track_angle,
-        constraint_width_m=settings.constraint_width_m,
-        sigma_dx_m=sigma_dx,
-        sigma_v_r=sigma_v_r,
-        sigma_v_t=sigma_v_r / (abs_cos_phi * local.sin_incidence),
-        flags=flags,
-        indicator=indicator,
         constraint_lonlat=[ecef_to_lonlat(a), ecef_to_lonlat(b)],
         track_lonlat=track,
     )
@@ -789,7 +813,7 @@ def relocate_single_click(
     target_class : TargetClass
         Sets the speed limit.
     settings : RelocationSettings or None
-        Uncertainty, residual and plausibility settings.
+        Uncertainty and plausibility settings.
     band : Band or None
         Band of *target* (computed when not given).
     target_height : float or None
@@ -813,48 +837,17 @@ def relocate_single_click(
         raise ConstraintError(
             "Click inside the band, where the road / wake crosses it."
         )
-    r_true = target.slant_range
-    if settings.range_residual:
-        r_true = _range_with_residual(geometry, target, t_true, c)
+    r_true = _range_with_residual(geometry, target, t_true, c)
     p_true = geometry.orbit.geocode(r_true, t_true, h_target, c)
-
-    local = local_geometry(geometry, t_true, p_true)
-    dt = target.time - t_true
-    v_r = local.v_eff2 * dt / target.slant_range
-    v_t_min = abs(v_r) / local.sin_incidence
-    sigma_dx = _sigma_dx(settings)
-    flags, indicator = plausibility(
-        dx_m=local.v_ground * dt,
-        dx_max_m=band.dx_max_m,
-        v_t=v_t_min,
-        target_class=target_class,
-        constraint_track_angle_deg=None,
-        band_clipped=band.clipped,
-        settings=settings,
-    )
-
-    return Relocation(
-        target=target,
-        target_class=target_class,
-        t_true=t_true,
-        t_true_utc=_utc(geometry, t_true),
-        p_true=p_true,
-        v_r=v_r,
-        v_gr=v_r / local.sin_incidence,
-        dx_m=local.v_ground * dt,
-        v_t=None,
-        v_t_min=v_t_min,
-        heading_deg=None,
-        phi_deg=None,
-        constraint_track_angle_deg=None,
-        constraint_width_m=settings.constraint_width_m,
-        sigma_dx_m=sigma_dx,
-        sigma_v_r=local.v_eff2 * sigma_dx / (local.v_ground * target.slant_range),
-        sigma_v_t=None,
-        flags=flags,
-        indicator=indicator,
+    return _relocation(
+        geometry,
+        target,
+        target_class,
+        settings,
+        band,
+        t_true,
+        p_true,
         constraint_lonlat=[ecef_to_lonlat(c)],
-        track_lonlat=[],
         mode=MODE_SINGLE_CLICK,
     )
 

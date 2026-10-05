@@ -38,7 +38,6 @@ class HullParameters:
     ring_width_m: float = 30.0
     hull_snr_db: float = 10.0
     hull_dynamic_range_db: float = 25.0
-    streak_db: float = 15.0
 
 
 # ----------------------------------------------------------------------------------
@@ -167,17 +166,6 @@ class Orbit:
 
 
 @dataclass
-class Kinematics:
-    """Zero-Doppler kinematics of an Earth-fixed point."""
-
-    v_eff: float
-    v_ground: float
-    slant_range: float
-    sat_position: NDArray[np.float64]
-    sat_velocity: NDArray[np.float64]
-
-
-@dataclass
 class ProductGeometry:
     """Metadata needed for relocation, parsed from ``ICEYE_PROPERTIES``.
 
@@ -222,29 +210,6 @@ class ProductGeometry:
             orbit=orbit,
             dc_times=dc_times,
             acquisition_window=window,
-        )
-
-    def kinematics(self, t: float, point: NDArray[np.float64]) -> Kinematics:
-        """Effective and ground velocity at a zero-Doppler point.
-
-        ``V_eff^2 = |v|^2 - a . (P - S)`` is the exact second derivative of the range
-        history in the Earth-fixed frame.
-        """
-        s = self.orbit.position(t)
-        v = self.orbit.velocity(t)
-        d = point - s
-        v_eff2 = float(v @ v - self.orbit.acceleration(t) @ d)
-        v_ground = (
-            float(np.linalg.norm(v))
-            * float(np.linalg.norm(point))
-            / float(np.linalg.norm(s))
-        )
-        return Kinematics(
-            v_eff=math.sqrt(max(v_eff2, 0.0)),
-            v_ground=v_ground,
-            slant_range=float(np.linalg.norm(d)),
-            sat_position=s,
-            sat_velocity=v,
         )
 
 
@@ -424,36 +389,23 @@ def build_click_masks(
     return ClickMasks(inner, ring, (slice(r_lo, r_hi), slice(c_lo, c_hi)))
 
 
-def hull_and_clutter_masks(
+def hull_mask(
     intensity: NDArray[np.floating[Any]],
     corridor: NDArray[np.bool_],
     ring: NDArray[np.bool_],
     params: HullParameters,
-) -> tuple[NDArray[np.bool_], NDArray[np.bool_], float]:
-    """Bright hull pixels in the corridor, and ring pixels free of bright returns.
+) -> NDArray[np.bool_]:
+    """Return the bright hull pixels in the corridor.
 
-    The ring also drops the hull's sidelobe streaks: every range line the hull
-    occupies (azimuth streaks) and the columns of its strongest scatterers (range
-    streaks). Returns (hull, clean_ring, clutter_level).
+    Pixels must exceed both the ring clutter by hull_snr_db and the corridor peak
+    minus hull_dynamic_range_db, which drops most sidelobe energy.
     """
-    ring_values = intensity[ring]
-    if ring_values.size == 0:
-        ring_values = intensity[corridor]
+    ring_values = intensity[ring] if ring.any() else intensity[corridor]
     clutter = float(np.median(ring_values)) if ring_values.size else 0.0
-    snr = 10.0 ** (params.hull_snr_db / 10.0)
     inside = intensity[corridor]
     peak = float(inside.max()) if inside.size else 0.0
     threshold = max(
-        clutter * snr, peak * 10.0 ** (-params.hull_dynamic_range_db / 10.0)
+        clutter * 10.0 ** (params.hull_snr_db / 10.0),
+        peak * 10.0 ** (-params.hull_dynamic_range_db / 10.0),
     )
-    hull = corridor & (intensity > threshold)
-    streak_rows = hull.any(axis=1)
-    strongest = hull & (intensity > peak * 10.0 ** (-params.streak_db / 10.0))
-    streak_cols = strongest.any(axis=0)
-    clean_ring = (
-        ring
-        & (intensity <= clutter * snr)
-        & ~streak_rows[:, None]
-        & ~streak_cols[None, :]
-    )
-    return hull, clean_ring, clutter
+    return corridor & (intensity > threshold)

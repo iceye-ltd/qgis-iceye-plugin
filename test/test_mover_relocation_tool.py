@@ -9,7 +9,7 @@ import pytest
 from qgis.core import Qgis, QgsMarkerLineSymbolLayer, QgsPointXY, QgsProject
 
 from iceye_toolbox.core.metadata import MetadataProvider
-from iceye_toolbox.core.mover_relocation import ConstraintAxis
+from iceye_toolbox.core.mover_relocation import ConstraintAxis, ImagedTarget
 from iceye_toolbox.core.target_finder import ecef_to_lonlat
 from iceye_toolbox.gui.mover_relocation_tool import (
     STEP_CONSTRAINT,
@@ -37,10 +37,22 @@ def slc_layer(qgis_iface, base_crop_layer):
 
 
 @pytest.fixture
-def dialog(qgis_iface, slc_layer):
-    """Mover Relocation panel waiting for a target, hull snapping off."""
+def dialog(qgis_iface, slc_layer, monkeypatch):
+    """Mover Relocation panel waiting for a target.
+
+    The simulated cars are not in the fixture image, so the target click is taken
+    as is instead of snapping to a hull.
+    """
+    import iceye_toolbox.gui.mover_relocation_tool as tool
+
+    monkeypatch.setattr(
+        tool,
+        "target_from_click",
+        lambda scene, lon, lat, _provider: ImagedTarget.from_ecef(
+            scene.geometry, scene.ecef(lon, lat), scene.display_height
+        ),
+    )
     panel = MoverRelocationDialog(qgis_iface, metadata_provider=MetadataProvider())
-    panel.detect_check.setChecked(False)
     assert panel.start(), panel._step_label.text()
     yield panel
     panel.close()
@@ -153,7 +165,6 @@ class TestMoverRelocationDialog:
         earlier = MoverRelocationDialog(
             qgis_iface, metadata_provider=MetadataProvider()
         )
-        earlier.detect_check.setChecked(False)
         earlier.start()
         earlier.handle_click(imaged)
         earlier.close()

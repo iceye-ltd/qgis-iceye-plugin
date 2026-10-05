@@ -37,7 +37,6 @@ from qgis.PyQt.QtWidgets import (
     QCheckBox,
     QComboBox,
     QDialog,
-    QDoubleSpinBox,
     QFormLayout,
     QHBoxLayout,
     QLabel,
@@ -247,18 +246,14 @@ def target_from_click(
     lon: float,
     lat: float,
     metadata_provider: MetadataProvider,
-    detect_hull: bool = True,
 ) -> ImagedTarget:
     """Return the imaged target at a click: the hull centroid nearby, or the click itself."""
-    geometry, h = scene.geometry, scene.display_height
-    if not detect_hull:
-        return ImagedTarget.from_ecef(geometry, scene.ecef(lon, lat), h)
     params = HullParameters()
     radius = (
         params.corridor_half_width_m + params.ring_gap_m + params.ring_width_m + 5.0
     )
     chip, row, col = chip_around(scene, lon, lat, radius, metadata_provider)
-    return locate_imaged_target(chip, row, col, h, params)
+    return locate_imaged_target(chip, row, col, scene.display_height, params)
 
 
 class MoverRelocationMapTool(QgsMapTool):
@@ -590,45 +585,6 @@ class MoverRelocationDialog(QDialog):
                 "placed on the sea surface; cars and trains on the image surface."
             )
         )
-        self.margin_spin = QDoubleSpinBox()
-        self.margin_spin.setRange(0.0, 500.0)
-        self.margin_spin.setSuffix(" m")
-        self.margin_spin.setValue(RelocationSettings.band_margin_m)
-        self.margin_spin.setToolTip(
-            _tr(
-                "Extra half-width of the band beyond half the target's size, in "
-                "ground metres. Wider makes the band easier to see and lets the "
-                "cursor readout work slightly off the exact range line."
-            )
-        )
-        self.tick_spin = QDoubleSpinBox()
-        self.tick_spin.setRange(0.5, 50.0)
-        self.tick_spin.setSuffix(" m/s")
-        self.tick_spin.setValue(RelocationSettings.tick_step_mps)
-        self.tick_spin.setToolTip(
-            _tr(
-                "Spacing of the speed ticks along the band, in radial velocity "
-                "|v_r| (towards / away from the radar). Each tick also shows the "
-                "minimum ground speed that radial velocity implies."
-            )
-        )
-        self.detect_check = QCheckBox(_tr("Snap the click to the target hull"))
-        self.detect_check.setChecked(True)
-        self.detect_check.setToolTip(
-            _tr(
-                "On: the target click searches about 15 m around itself for the "
-                "bright target and uses its intensity-weighted centre. Off: the "
-                "clicked point itself is the imaged position."
-            )
-        )
-        self.residual_check = QCheckBox(_tr("Apply range residual (fast movers)"))
-        self.residual_check.setToolTip(
-            _tr(
-                "A mover's true slant range is slightly longer than its imaged one "
-                "(about 6 mm at 1 m/s, 0.9 m at 12.5 m/s). Turn on for fast "
-                "targets; negligible for ships and slow traffic."
-            )
-        )
         self.extrapolate_check = QCheckBox(
             _tr("Allow constraint points on one side of the band")
         )
@@ -659,10 +615,6 @@ class MoverRelocationDialog(QDialog):
 
         form = QFormLayout()
         form.addRow(_tr("Target class"), self.class_combo)
-        form.addRow(_tr("Band margin"), self.margin_spin)
-        form.addRow(_tr("Tick step |v_r|"), self.tick_spin)
-        form.addRow(self.detect_check)
-        form.addRow(self.residual_check)
         form.addRow(self.extrapolate_check)
         form.addRow(self.single_check)
         legend = QLabel(
@@ -726,10 +678,7 @@ class MoverRelocationDialog(QDialog):
     def settings(self) -> RelocationSettings:
         """Return the relocation settings from the panel controls."""
         return RelocationSettings(
-            band_margin_m=self.margin_spin.value(),
-            tick_step_mps=self.tick_spin.value(),
-            range_residual=self.residual_check.isChecked(),
-            allow_extrapolation=self.extrapolate_check.isChecked(),
+            allow_extrapolation=self.extrapolate_check.isChecked()
         )
 
     def target_class(self):
@@ -838,7 +787,6 @@ class MoverRelocationDialog(QDialog):
                     point.x(),
                     point.y(),
                     self.metadata_provider,
-                    detect_hull=self.detect_check.isChecked(),
                 )
             except Exception as e:
                 _log_warning(f"Mover Relocation could not read the target: {e}")
@@ -881,10 +829,10 @@ class MoverRelocationDialog(QDialog):
             _tr(
                 "|v_r| {v:.1f} m/s ({kmh:.0f} km/h, {kn:.1f} kn), |dx| {dx:.0f} m"
             ).format(
-                v=readout.v_r_abs,
-                kmh=readout.kmh,
-                kn=readout.knots,
-                dx=readout.dx_abs_m,
+                v=readout[0],
+                kmh=readout[0] * MPS_TO_KMH,
+                kn=readout[0] * MPS_TO_KNOTS,
+                dx=readout[1],
             )
         )
 

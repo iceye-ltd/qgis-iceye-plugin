@@ -174,7 +174,7 @@ class TestSignValidation:
             a,
             b,
             TARGET_CLASSES["car"],
-            RelocationSettings(range_residual=True),
+            RelocationSettings(),
         )
         # An approaching target is imaged later in zero-Doppler time.
         assert (mover.t_img > mover.t_true) == (mover.v_r > 0)
@@ -226,8 +226,8 @@ class TestBand:
         inside = geometry.orbit.geocode(
             target.slant_range, target.time - 0.05, target.height, scene_point
         )
-        readout = cursor_readout(geometry, target, band, inside)
-        assert readout.v_r_abs == pytest.approx(
+        v_r_abs, _ = cursor_readout(geometry, target, band, inside)
+        assert v_r_abs == pytest.approx(
             local.v_eff2 * 0.05 / target.slant_range, rel=1e-3
         )
         outside = geometry.orbit.geocode(
@@ -261,7 +261,7 @@ class TestConstraint:
             target,
             scene_point,
             TARGET_CLASSES["car"],
-            RelocationSettings(range_residual=True),
+            RelocationSettings(),
         )
         assert result.t_true == pytest.approx(mover.t_true, abs=2e-5)
         assert result.v_r == pytest.approx(mover.v_r, rel=0.01)

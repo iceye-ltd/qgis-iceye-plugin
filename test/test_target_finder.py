@@ -10,7 +10,7 @@ from __future__ import annotations
 import numpy as np
 import pytest
 
-from iceye_toolbox.core.mover_relocation import locate_imaged_target
+from iceye_toolbox.core.mover_relocation import local_geometry, locate_imaged_target
 from iceye_toolbox.core.target_finder import (
     HullParameters,
     ProductGeometry,
@@ -96,8 +96,8 @@ class TestGeometry:
         assert np.linalg.norm(back - point) < 0.01
         assert ecef_to_lonlat(back) == pytest.approx((lon, lat), abs=1e-8)
         # About 90 m of along-track shift per 1 m/s radial velocity.
-        kin = geometry.kinematics(t, point)
-        assert 80 < r * kin.v_ground / kin.v_eff**2 < 100
+        local = local_geometry(geometry, t, point)
+        assert 80 < r * local.v_ground / local.v_eff2 < 100
 
 
 class TestTargetInput:
