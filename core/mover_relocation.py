@@ -59,6 +59,9 @@ INDICATOR_GREEN = "green"
 INDICATOR_AMBER = "amber"
 INDICATOR_RED = "red"
 
+RADIAL_APPROACHING = "approaching"
+RADIAL_RECEDING = "receding"
+
 
 @dataclass(frozen=True)
 class TargetClass:
@@ -587,6 +590,11 @@ class Relocation:
     sign_validated: bool = SIGN_VALIDATED
 
     @property
+    def radial_motion(self) -> str:
+        """Return whether the target approaches or recedes from the radar (v_r sign)."""
+        return RADIAL_APPROACHING if self.v_r > 0 else RADIAL_RECEDING
+
+    @property
     def true_lonlat(self) -> tuple[float, float]:
         """True position (lon, lat)."""
         return ecef_to_lonlat(self.p_true)
@@ -596,6 +604,7 @@ class Relocation:
         v_t = self.v_t
         return {
             "mode": self.mode,
+            "radial": self.radial_motion,
             "v_r": self.v_r,
             "v_gr": self.v_gr,
             "v_t": v_t,

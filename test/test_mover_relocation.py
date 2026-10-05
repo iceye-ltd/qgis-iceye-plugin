@@ -28,6 +28,8 @@ from iceye_toolbox.core.mover_relocation import (
     INDICATOR_RED,
     MODE_SINGLE_CLICK,
     MODE_SINGLE_CLICK_AUTO,
+    RADIAL_APPROACHING,
+    RADIAL_RECEDING,
     TARGET_CLASSES,
     ConstraintAxis,
     ConstraintError,
@@ -255,6 +257,27 @@ class TestSignValidation:
         assert result.v_t == pytest.approx(speed, rel=0.015)
         assert _angle_diff(result.heading_deg, _expected_heading(p0, velocity)) < 0.5
         assert result.sign_validated
+
+    def test_opposite_cars_on_one_bridge(self, geometry, scene_point):
+        """Cars going opposite ways over the same bridge get opposite v_r and heading."""
+        bridge = _ground_velocity(scene_point, 1.0, 70.0)
+        a = _on_surface(scene_point - 60.0 * bridge, geometry.scene_height)
+        b = _on_surface(scene_point + 60.0 * bridge, geometry.scene_height)
+        results = []
+        for heading in (70.0, 250.0):
+            velocity = _ground_velocity(scene_point, 15.0, heading)
+            mover = simulate_mover(geometry, scene_point, velocity)
+            target = _imaged_target(geometry, mover)
+            result = relocate(geometry, target, a, b, TARGET_CLASSES["car"])
+            assert math.copysign(1.0, result.v_r) == math.copysign(1.0, mover.v_r)
+            assert _angle_diff(result.heading_deg, heading) < 0.5
+            results.append(result)
+        assert {r.radial_motion for r in results} == {
+            RADIAL_APPROACHING,
+            RADIAL_RECEDING,
+        }
+        assert results[0].dx_m * results[1].dx_m < 0
+        assert results[0].attributes()["radial"] != results[1].attributes()["radial"]
 
     def test_look_sides_differ(self, geometry, scene_point):
         """The mirrored point really is on the other side of the ground track."""

@@ -397,6 +397,22 @@ class TestMoverRelocationDialog:
         dialog.handle_click(imaged)
         assert dialog.outputs.layer("band") is not None
 
+    def test_opposite_cars_read_differently(self, qgis_iface, slc_layer):
+        """One car approaches and the other recedes; the panel says so in words."""
+        dialog = self._dialog(qgis_iface)
+        assert dialog.start()
+        texts = []
+        for heading in (100.0, 280.0):
+            _, imaged, on_road = _mover(dialog.scene, speed=10.0, heading=heading)
+            dialog.handle_click(imaged)
+            dialog.handle_click(on_road(-60.0))
+            dialog.handle_click(on_road(60.0))
+            assert dialog.step == STEP_DONE, dialog._result.text()
+            texts.append(dialog._result.text())
+        assert "towards radar +" not in " ".join(texts)
+        assert sum("approaching the radar" in t for t in texts) == 1
+        assert sum("receding from the radar" in t for t in texts) == 1
+
     def test_constraint_must_straddle(self, qgis_iface, slc_layer):
         """Two clicks on one side are rejected and the constraint step restarts."""
         dialog = self._dialog(qgis_iface)

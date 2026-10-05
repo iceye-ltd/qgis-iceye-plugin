@@ -52,6 +52,7 @@ from ..core.mover_relocation import (
     MODE_SINGLE_CLICK_AUTO,
     MPS_TO_KMH,
     MPS_TO_KNOTS,
+    RADIAL_APPROACHING,
     TARGET_CLASSES,
     Band,
     ConstraintError,
@@ -501,9 +502,16 @@ def format_relocation(result: Relocation) -> str:
             lon=lon, lat=lat, utc=result.t_true_utc
         ),
         _speed_line(result),
-        _tr(
-            "v_r {vr:+.2f} &plusmn; {s:.2f} m/s (towards radar +), v_gr {vgr:+.2f} m/s"
-        ).format(vr=result.v_r, s=result.sigma_v_r, vgr=result.v_gr),
+        _tr("v_r {vr:+.2f} &plusmn; {s:.2f} m/s, {motion}; v_gr {vgr:+.2f} m/s").format(
+            vr=result.v_r,
+            s=result.sigma_v_r,
+            motion=(
+                _tr("approaching the radar")
+                if result.radial_motion == RADIAL_APPROACHING
+                else _tr("receding from the radar")
+            ),
+            vgr=result.v_gr,
+        ),
         dx_line,
     ]
     return "<br>".join(lines)
