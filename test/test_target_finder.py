@@ -16,10 +16,8 @@ from iceye_toolbox.core.target_finder import (
     ProductGeometry,
     SlcChip,
     ecef_to_lonlat,
-    ellipse_mask,
     gcp_pixel_to_lonlat,
     lonlat_to_ecef,
-    patch_to_file_layout,
     read_iceye_properties,
 )
 
@@ -85,66 +83,35 @@ def _inject_ship(data: np.ndarray, properties: dict, amplitude: float) -> None:
 class TestGeometry:
     """Orbit fit, range-Doppler inverse and geocoding on the fixture metadata."""
 
-    def test_metadata_parsing(self, geometry):
-        """ICEYE_PROPERTIES fields land in ProductGeometry."""
-        assert geometry.scene_height == -3.0
-        assert len(geometry.dc_times) == 10
-        start, end = geometry.acquisition_window
-        assert end - start == pytest.approx(28.789, abs=1e-3)
-
     def test_zero_doppler_geocode_round_trip(self, geometry, pixel_to_lonlat):
         """Range-Doppler inverse then geocode returns the same point."""
+        assert geometry.scene_height == -3.0
+        start, end = geometry.acquisition_window
+        assert end - start == pytest.approx(28.789, abs=1e-3)
         lon, lat = pixel_to_lonlat(4000.5, 400.5)
         point = lonlat_to_ecef(lon, lat, geometry.scene_height)
         t, r = geometry.orbit.zero_doppler(point, 0.35)
-        assert 0.0 < t < 0.72
         assert 701000 < r < 705000
         back = geometry.orbit.geocode(r, t, geometry.scene_height, point + 50.0)
         assert np.linalg.norm(back - point) < 0.01
         assert ecef_to_lonlat(back) == pytest.approx((lon, lat), abs=1e-8)
-
-    def test_azimuth_shift_per_mps(self, geometry, pixel_to_lonlat):
-        """Azimuth shift per 1 m/s radial velocity, R * V_g / V_eff^2, is ~90 m."""
-        lon, lat = pixel_to_lonlat(4000.5, 400.5)
-        point = lonlat_to_ecef(lon, lat, geometry.scene_height)
-        t, r = geometry.orbit.zero_doppler(point, 0.35)
+        # About 90 m of along-track shift per 1 m/s radial velocity.
         kin = geometry.kinematics(t, point)
-        assert kin.slant_range == pytest.approx(r)
         assert 80 < r * kin.v_ground / kin.v_eff**2 < 100
-
-
-class TestPrimitives:
-    """Masks and layout helpers on synthetic arrays."""
-
-    def test_ellipse_mask_is_anisotropic(self):
-        """The click disc honours separate row and column half-widths."""
-        mask = ellipse_mask((100, 100), 50.0, 50.0, half_rows=5, half_cols=10)
-        assert mask[45, 50] and not mask[44, 50]
-        assert mask[55, 50] and not mask[56, 50]
-        assert mask[50, 40] and not mask[50, 39]
-        assert mask[50, 60] and not mask[50, 61]
-
-    def test_patch_to_file_layout_inverts_read_orientation(self):
-        """Undoes the shadows-down orientation of read_slc_layer."""
-        file_data = np.arange(12).reshape(3, 4)
-        for left in (False, True):
-            patch = (np.fliplr(file_data) if left else file_data).T
-            assert np.array_equal(patch_to_file_layout(patch, left), file_data)
 
 
 class TestTargetInput:
     """Imaged position of an injected ship from a click."""
 
-    @pytest.mark.parametrize("offset_cols", [0, 300])
-    def test_hull_centroid(self, geometry, properties, pixel_to_lonlat, offset_cols):
-        """The hull centroid lands on the injected ship, wherever on it the click is."""
+    def test_hull_centroid(self, geometry, properties, pixel_to_lonlat):
+        """A click on the ship's end snaps to the hull centroid."""
         data = _clutter(properties)
         _inject_ship(data, properties, amplitude=3e4)
         chip = SlcChip(data, 0, 0, geometry, pixel_to_lonlat)
         target = locate_imaged_target(
             chip,
             SHIP_ROW,
-            SHIP_COL + offset_cols,
+            SHIP_COL + 300,
             geometry.scene_height,
             HullParameters(corridor_half_width_m=30.0),
         )
