@@ -278,14 +278,17 @@ class IceyeToolbox:
             status_tip="Export the current canvas",
         )
 
-        self.add_action(
+        mover_action = self.add_action(
             icon_path=":/plugins/iceye_toolbox/mover-relocation.svg",
             text=self.tr("Mover Relocation"),
             callback=self.open_mover_relocation,
+            add_to_toolbar=False,
             parent=self.iface.mainWindow(),
             status_tip="Relocate a moving target in a Spotlight / Dwell SLC: click "
             "the target, then its road, rail, bridge or wake",
         )
+        # Next to the SAR mandala placement button on the SAR View toolbar.
+        self.mandala_toolbar_action.toolbar.addAction(mover_action)
 
         self.run()
 
