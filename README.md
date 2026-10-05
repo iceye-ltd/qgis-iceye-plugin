@@ -116,7 +116,7 @@ Finds the true position of a moving target (car, train or ship) in an ICEYE SAR 
 > [!TIP]
 > Select the image layer, open **Mover Relocation** and choose the target class. Click **Pick target** and click the centre of the imaged (displaced) target; the band appears. Hover over the band to read the radial velocity a position implies. Then click two points on the road / rail / bridge deck / wake, one on each side of the band. With **Single click on the constraint**, click once where it crosses the band instead; the road direction is then estimated from the image (check the cyan points), or only a minimum speed is given if no clear line is found. On bridges click the deck's bright line, not its reflection on the water. **Esc** or right-click cancels the current target; **Reset** removes all Mover layers. Hover over a setting in the panel to see what it does.
 
-[mover-relocator-demo.webm](https://github.com/user-attachments/assets/2c5858dd-69a2-4dca-92b9-fd03762009a2)]
+[mover-relocator-demo.webm](https://github.com/user-attachments/assets/2c5858dd-69a2-4dca-92b9-fd03762009a2)
 
 #### Batch processing
 
